@@ -154,7 +154,30 @@ python3 -m venv .venv
   - 4 拍 / 16 拍 / 手动画的 1.5 秒 loop 都验证了 `OutMsec` + `BeatLoopSize`（整拍用 `(拍数<<16)|1`，非整拍写 0）；
   - Rekordbox 的 4 拍 loop → Serato：Serato 的 saved loops 列表里正常出现（`01:01.4`，可加载播放）；
   - 反向：Serato 文件 → Rekordbox，自动写成 pad C 的黄色 4 拍 loop（`BeatLoopSize=262145`）。
-- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid → Rekordbox 网格（目前只用它取 BPM）；cue 颜色映射（Rekordbox 颜色表与 Serato 调色板不同，目前 Color 留空）；Serato 侧"用户自己保存的 loop"样本对照（本轮用的是我们写进去的 loop，Serato 与 Rekordbox 都确认能读）。
+- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid → Rekordbox 网格（目前只用它取 BPM）；Serato 侧"用户自己保存的 loop"样本对照（本轮用的是我们写进去的 loop，Serato 与 Rekordbox 都确认能读）。
+
+## cue 颜色
+
+Rekordbox 的 hot cue 颜色**不是 RGB**：`djmdCue.ColorTableIndex` 存的是内置 16 色调色板的
+编号（`0` = 不设颜色，rekordbox 会按 pad 槽位给默认色；`djmdCue.Color` 字段在 GUI 设色时
+保持 `255`，不是颜色值）。下表的编号与 RGB 是 2026-09-14 实机测出来的（在 rekordbox 颜色
+菜单里逐格设色，再读 `ColorTableIndex`，和色板截图配对）：
+
+| ColorTableIndex | 颜色 | RGB | | ColorTableIndex | 颜色 | RGB |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Blue | `#3A59F6` | | 32 | DarkYellow | `#C0B039` |
+| 5 | SkyBlue | `#6BB2F9` | | 38 | Orange | `#D16B32` |
+| 9 | Cyan | `#66DDFB` | | 42 | Red | `#D33D34` |
+| 14 | Teal | `#4EA192` | | 45 | Rose | `#EA387B` |
+| 18 | SeaGreen | `#51AE7B` | | 49 | Magenta | `#CD50C9` |
+| 22 | Green | `#6DDF46` | | 56 | Purple | `#A63DF6` |
+| 26 | Lime | `#B2DF4A` | | 60 | Violet | `#A274F7` |
+| 30 | Olive | `#B6BE3D` | | 62 | BlueViolet | `#6773F6` |
+
+两个方向都用这张表：
+
+- **Rekordbox → Serato**：读 `ColorTableIndex` → 换算成 RGB 写进 Serato 的 CUE 条目；没设色时写白色（Serato 的默认）。
+- **Serato → Rekordbox**：拿 Serato 的 RGB 找表里**最近的**颜色 → 写 `ColorTableIndex`（白色/黑色视为"没颜色"，写 0）；loop 不写颜色，rekordbox 自己会显示成循环色。
 
 ## License
 

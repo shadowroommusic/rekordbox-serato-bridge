@@ -8,6 +8,12 @@ import tempfile
 from pathlib import Path
 
 from shadow_rb_serato import mcp_server
+from shadow_rb_serato.colors import (
+    REKORDBOX_PALETTE,
+    SERATO_DEFAULT_RGB,
+    color_table_index_for_rgb,
+    rgb_from_color_table_index,
+)
 from shadow_rb_serato.model import CuePoint, Track
 from shadow_rb_serato.preview import preview
 from shadow_rb_serato.readers import read_serato
@@ -522,6 +528,41 @@ class SetExportTests(unittest.TestCase):
 
 
 class RekordboxExportTests(unittest.TestCase):
+    def test_rekordbox_palette_maps_both_ways(self) -> None:
+        # 实测表（2026-09-14，rekordbox GUI 逐格设色后读 ColorTableIndex）
+        self.assertEqual(len(REKORDBOX_PALETTE), 16)
+        self.assertEqual(rgb_from_color_table_index(42), 0xD33D34)  # 红
+        self.assertEqual(rgb_from_color_table_index(1), 0x3A59F6)  # 蓝
+        self.assertEqual(rgb_from_color_table_index(62), 0x6773F6)  # 蓝紫（编号最大）
+        self.assertIsNone(rgb_from_color_table_index(0))  # 不设颜色
+        self.assertIsNone(rgb_from_color_table_index(None))
+        self.assertIsNone(rgb_from_color_table_index(99))  # 未知编号
+
+        # Serato RGB → 最近的 rekordbox 编号
+        self.assertEqual(color_table_index_for_rgb(0xD33D34), 42)
+        self.assertEqual(color_table_index_for_rgb(0xFF0000), 42)  # 纯红也落到红
+        self.assertEqual(color_table_index_for_rgb(0x3A59F6), 1)
+        # 白色/黑色 = 没颜色（我们给没颜色的 cue 写的就是白色）
+        self.assertEqual(color_table_index_for_rgb(SERATO_DEFAULT_RGB), 0)
+        self.assertEqual(color_table_index_for_rgb(0x000000), 0)
+        self.assertEqual(color_table_index_for_rgb(None), 0)
+
+    def test_cue_color_becomes_serato_marker_color(self) -> None:
+        # rekordbox 侧读到调色板编号后，导出 Serato 时写成对应 RGB
+        track = SetTrack(
+            id="rb:1",
+            title="t",
+            artist="",
+            path="/tmp/t.mp3",
+            cues=(
+                CuePoint(1, 1000, None, "A", rgb_from_color_table_index(42), None, None),
+                CuePoint(2, 2000, None, "B", None, None, None),
+            ),
+        )
+        markers = markers_for(track)
+        self.assertEqual(markers[0].color, 0xD33D34)
+        self.assertEqual(markers[1].color, SERATO_DEFAULT_RGB)
+
     def test_cue_kind_mapping_matches_rekordbox_pad_order(self) -> None:
         # 实机实测（2026-09-14，16 条对照 cue 逐 pad 核对）：pad A..P 的 Kind 是
         # (1,2,3,5,6,…,17)；Kind=4 在 rekordbox 界面里不显示，必须跳过。

@@ -19,6 +19,7 @@ from urllib.parse import quote
 import xml.etree.ElementTree as ElementTree
 
 from . import serato_markers
+from .colors import color_table_index_for_rgb
 from .model import CuePoint, PAD_KINDS
 from .readers import serato_local_path
 from .serato_export import SetTrack
@@ -241,6 +242,9 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
         is_loop = bool(cue.active_loop) or cue.out_ms is not None
         position = int(cue.in_ms)
         kind = cue_kind_for_index(index)
+        # Serato 的 cue 颜色是 RGB，rekordbox 存的是调色板编号（0 = 不设颜色）；
+        # loop 在 rekordbox 里统一显示成循环色，不写调色板颜色。
+        color_index = 0 if is_loop else color_table_index_for_rgb(cue.color)
         planned.append(
             {
                 "in_ms": int(cue.in_ms),
@@ -248,6 +252,7 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
                 "comment": str(cue.comment or ""),
                 "is_loop": is_loop,
                 "kind": kind,
+                "color_table_index": color_index,
                 "duplicate": position in existing,
             }
         )
@@ -333,7 +338,7 @@ def write_rekordbox_set(
                     OutMsec=out_msec,
                     Comment=cue["comment"],
                     Color=255,
-                    ColorTableIndex=0,
+                    ColorTableIndex=cue.get("color_table_index", 0),
                     ActiveLoop=0 if cue["is_loop"] else None,
                     BeatLoopSize=beat_loop_size if cue["is_loop"] else None,
                     CueMicrosec=0,
@@ -355,7 +360,7 @@ def write_rekordbox_set(
                     "OutMpegAbs": 0,
                     "Kind": cue["kind"],
                     "Color": 255,
-                    "ColorTableIndex": 0,
+                    "ColorTableIndex": cue.get("color_table_index", 0),
                     "ActiveLoop": 0 if cue["is_loop"] else None,
                     "Comment": cue["comment"],
                     "BeatLoopSize": beat_loop_size if cue["is_loop"] else None,

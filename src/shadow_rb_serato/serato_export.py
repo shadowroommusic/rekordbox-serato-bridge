@@ -21,6 +21,7 @@ import shutil
 import struct
 
 from . import serato_markers
+from .colors import SERATO_DEFAULT_RGB
 from .model import CuePoint
 from .serato_markers import MARKERS2_DESC, SeratoMarker
 
@@ -50,7 +51,9 @@ class RekordboxSet:
 def cue_to_marker(index: int, cue: CuePoint) -> SeratoMarker:
     """Rekordbox 的 memory cue / hot cue / loop → Serato 标记。"""
     is_loop = bool(cue.active_loop) or (cue.out_ms is not None)
-    color = cue.color if isinstance(cue.color, int) else None
+    # rekordbox 侧已经按调色板编号换算成 RGB（readers.read_rekordbox）；
+    # 没设颜色的 cue 用 Serato 的默认白色，避免写成黑色。
+    color = cue.color if isinstance(cue.color, int) and cue.color >= 0 else SERATO_DEFAULT_RGB
     if is_loop and cue.out_ms is not None:
         return SeratoMarker("loop", index, cue.in_ms, cue.out_ms, cue.comment, color, False, MARKERS2_DESC)
     return SeratoMarker("cue", index, cue.in_ms, None, cue.comment, color, None, MARKERS2_DESC)

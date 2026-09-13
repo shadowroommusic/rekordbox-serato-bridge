@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from .colors import rgb_from_color_table_index
 from .model import CuePoint, Track, pad_rank
 from . import serato_markers
 
@@ -39,7 +40,9 @@ def read_rekordbox(database: str | Path, db_dir: str | Path) -> list[Track]:
                     in_ms=int(cue.InMsec) if cue.InMsec is not None else None,
                     out_ms=(int(cue.OutMsec) if cue.OutMsec is not None and int(cue.OutMsec) >= 0 else None),
                     comment=_text(cue.Comment) or None,
-                    color=int(cue.Color) if cue.Color is not None else None,
+                    # rekordbox 的 cue 颜色存的是调色板编号（ColorTableIndex），不是 RGB；
+                    # 0 = 不设颜色。
+                    color=rgb_from_color_table_index(cue.ColorTableIndex),
                     active_loop=bool(cue.ActiveLoop) if cue.ActiveLoop is not None else None,
                     beat_loop_size=int(cue.BeatLoopSize) if cue.BeatLoopSize is not None else None,
                 )
