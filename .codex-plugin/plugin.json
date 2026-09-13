@@ -8,8 +8,8 @@
     "url": "https://shadowroom.cn"
   },
   "homepage": "https://shadowroom.cn",
-  "repository": "https://github.com/shadowroommusic",
-  "license": "MIT",
+  "repository": "https://github.com/shadowroommusic/rekordbox-serato-bridge",
+  "license": "AGPL-3.0",
   "keywords": [
     "rekordbox",
     "serato",
