@@ -11,9 +11,9 @@ from shadow_rb_serato.model import CuePoint, Track
 from shadow_rb_serato.preview import preview
 from shadow_rb_serato.readers import read_serato
 from shadow_rb_serato.rekordbox_export import (
-    CUE_POINT_KIND,
-    HOT_CUE_KIND,
-    LOOP_CUE_KIND,
+    FIRST_PAD_KIND,
+    LAST_PAD_KIND,
+    MEMORY_CUE_KIND,
     SeratoSet,
     _beat_loop_size,
     cue_kind_for_index,
@@ -484,16 +484,15 @@ class SetExportTests(unittest.TestCase):
 
 class RekordboxExportTests(unittest.TestCase):
     def test_cue_kind_mapping_matches_rekordbox_pad_order(self) -> None:
-        # 实机验证：第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）。
-        self.assertEqual(cue_kind_for_index(0, is_loop=False), CUE_POINT_KIND)
-        self.assertEqual(cue_kind_for_index(1, is_loop=False), HOT_CUE_KIND)
-        self.assertEqual(cue_kind_for_index(7, is_loop=False), HOT_CUE_KIND)
-        self.assertEqual(CUE_POINT_KIND, 1)
-        self.assertEqual(HOT_CUE_KIND, 2)
-        # loop 用 Kind=3（rekordbox 里显示为黄色），拍数打包进 BeatLoopSize。
-        self.assertEqual(cue_kind_for_index(0, is_loop=True), LOOP_CUE_KIND)
-        self.assertEqual(cue_kind_for_index(3, is_loop=True), LOOP_CUE_KIND)
-        self.assertEqual(LOOP_CUE_KIND, 3)
+        # 实机验证（用 rekordbox 自己的 XML 导出核对）：Kind 就是槽位编号，
+        # 1 = pad A、2 = pad B、3 = pad C…；loop 与 Kind 无关。
+        self.assertEqual(cue_kind_for_index(0), FIRST_PAD_KIND)
+        self.assertEqual(cue_kind_for_index(1), 2)
+        self.assertEqual(cue_kind_for_index(2), 3)
+        self.assertEqual(cue_kind_for_index(7), LAST_PAD_KIND)
+        # 超过 8 条没有更多 pad，降级为 memory cue 但保留数据。
+        self.assertEqual(cue_kind_for_index(8), MEMORY_CUE_KIND)
+        self.assertEqual(cue_kind_for_index(20), MEMORY_CUE_KIND)
 
     def test_beat_loop_size_packs_beats_like_rekordbox(self) -> None:
         track = SetTrack(id="rb:1", title="CONTEXT", artist="", path="/tmp/track.mp3", bpm=140.0)

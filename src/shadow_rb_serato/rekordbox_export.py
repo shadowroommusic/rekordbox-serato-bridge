@@ -25,16 +25,21 @@ from .serato_export import SetTrack
 
 BACKUP_SUFFIX = "shadow-backup"
 
-# rekordbox 的 cue 类型约定（实机验证，用 rekordbox 自己的 XML 导出核对）：
-#   0 = memory cue（记忆点，波形上的标记）
-#   1 = 曲目的 cue 点；第一条 cue 用它，rekordbox 会把它放进 pad A
-#   2 = hot cue；第二条及之后用它，依次占 pad B、C、D…
-#   3 = loop（rekordbox 里显示为黄色，拍数打包进 BeatLoopSize）
-# 也就是说：cue 的位置顺序决定 pad 顺序，第一条必须是 Kind=1 才会占住 pad A。
-CUE_POINT_KIND = 1
-HOT_CUE_KIND = 2
+# rekordbox 的 cue 存储模型（实机验证，用 rekordbox 自己的 XML 导出核对）：
+#
+#   djmdCue.Kind  = 槽位编号，和 loop 无关
+#       0        = memory cue（波形上的标记）
+#       1..8     = hot cue pad A..H（1=A、2=B、3=C…）
+#   loop 由字段表示，不由 Kind 表示
+#       OutMsec >= 0            → 这是一条 loop（XML 里 Type="4" 且带 End）
+#       BeatLoopSize=(拍数<<16)|1 → 拍数（实机：4 拍 = 262145 = 0x40001）
+#       BeatLoopSize=0            → 任意长度的 loop
+#
+# 所以写入时：按位置排序，第 n 条 cue 用 Kind=n（pad A、B、C…），loop 只额外填
+# OutMsec 和 BeatLoopSize。超过 8 条时降级为 memory cue（Kind=0）保留数据。
 MEMORY_CUE_KIND = 0
-LOOP_CUE_KIND = 3
+FIRST_PAD_KIND = 1
+LAST_PAD_KIND = 8
 
 
 @dataclass(frozen=True)
@@ -210,7 +215,7 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
             continue
         is_loop = bool(cue.active_loop) or cue.out_ms is not None
         position = int(cue.in_ms)
-        kind = cue_kind_for_index(index, is_loop=is_loop)
+        kind = cue_kind_for_index(index)
         planned.append(
             {
                 "in_ms": int(cue.in_ms),
@@ -225,11 +230,13 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
     return planned
 
 
-def cue_kind_for_index(index: int, *, is_loop: bool = False) -> int:
-    """第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）；loop 用 Kind=3。"""
-    if is_loop:
-        return LOOP_CUE_KIND
-    return CUE_POINT_KIND if index == 0 else HOT_CUE_KIND
+def cue_kind_for_index(index: int) -> int:
+    """按位置顺序给出槽位：第 1 条 → pad A（Kind=1）、第 2 条 → pad B（Kind=2）……
+
+    超过 8 条时没有更多 pad，降级成 memory cue（Kind=0）以保留数据。
+    """
+    kind = index + 1
+    return kind if FIRST_PAD_KIND <= kind <= LAST_PAD_KIND else MEMORY_CUE_KIND
 
 
 def _beat_loop_size(track: SetTrack, cue_plan: dict) -> int:
