@@ -1,0 +1,19 @@
+{
+  "name": "rekordbox-serato-bridge",
+  "version": "0.1.0",
+  "description": "Rekordbox Serato Bridge plugin",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Rekordbox Serato Bridge",
+    "shortDescription": "Use Rekordbox Serato Bridge in Codex.",
+    "longDescription": "Rekordbox Serato Bridge adds a local Codex plugin scaffold.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Help me use Rekordbox Serato Bridge."
+  },
+  "mcpServers": "./.mcp.json"
+}

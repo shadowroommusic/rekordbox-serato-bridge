@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadow-rekordbox-serato-bridge"
+version = "0.1.0"
+description = "Bidirectional read-only Rekordbox and Serato conversion preview"
+requires-python = ">=3.9"
+dependencies = ["pyrekordbox>=0.4.4"]
+
+[project.scripts]
+shadow-rb-serato = "shadow_rb_serato.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
