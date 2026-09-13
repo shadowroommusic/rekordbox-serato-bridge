@@ -13,7 +13,9 @@ from shadow_rb_serato.readers import read_serato
 from shadow_rb_serato.rekordbox_export import (
     CUE_POINT_KIND,
     HOT_CUE_KIND,
+    LOOP_CUE_KIND,
     SeratoSet,
+    _beat_loop_size,
     cue_kind_for_index,
     read_serato_sets,
     to_rekordbox_xml,
@@ -483,11 +485,22 @@ class SetExportTests(unittest.TestCase):
 class RekordboxExportTests(unittest.TestCase):
     def test_cue_kind_mapping_matches_rekordbox_pad_order(self) -> None:
         # 实机验证：第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）。
-        self.assertEqual(cue_kind_for_index(0), CUE_POINT_KIND)
-        self.assertEqual(cue_kind_for_index(1), HOT_CUE_KIND)
-        self.assertEqual(cue_kind_for_index(7), HOT_CUE_KIND)
+        self.assertEqual(cue_kind_for_index(0, is_loop=False), CUE_POINT_KIND)
+        self.assertEqual(cue_kind_for_index(1, is_loop=False), HOT_CUE_KIND)
+        self.assertEqual(cue_kind_for_index(7, is_loop=False), HOT_CUE_KIND)
         self.assertEqual(CUE_POINT_KIND, 1)
         self.assertEqual(HOT_CUE_KIND, 2)
+        # loop 用 Kind=3（rekordbox 里显示为黄色），拍数打包进 BeatLoopSize。
+        self.assertEqual(cue_kind_for_index(0, is_loop=True), LOOP_CUE_KIND)
+        self.assertEqual(cue_kind_for_index(3, is_loop=True), LOOP_CUE_KIND)
+        self.assertEqual(LOOP_CUE_KIND, 3)
+
+    def test_beat_loop_size_packs_beats_like_rekordbox(self) -> None:
+        track = SetTrack(id="rb:1", title="CONTEXT", artist="", path="/tmp/track.mp3", bpm=140.0)
+        plan = {"is_loop": True, "in_ms": 61364, "out_ms": 63079}
+        # 1715 ms @140bpm = 4.001 拍 → (4 << 16) | 1 = 262145（与 rekordbox 实测值一致）
+        self.assertEqual(_beat_loop_size(track, plan), 262145)
+        self.assertEqual(_beat_loop_size(track, {"is_loop": False, "in_ms": 0, "out_ms": None}), 0)
 
     def build_serato_database(self, root: Path, mp3: Path) -> Path:
         database = root / "master.sqlite"

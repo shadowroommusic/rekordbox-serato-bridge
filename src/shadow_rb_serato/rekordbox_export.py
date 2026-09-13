@@ -29,10 +29,12 @@ BACKUP_SUFFIX = "shadow-backup"
 #   0 = memory cue（记忆点，波形上的标记）
 #   1 = 曲目的 cue 点；第一条 cue 用它，rekordbox 会把它放进 pad A
 #   2 = hot cue；第二条及之后用它，依次占 pad B、C、D…
+#   3 = loop（rekordbox 里显示为黄色，拍数打包进 BeatLoopSize）
 # 也就是说：cue 的位置顺序决定 pad 顺序，第一条必须是 Kind=1 才会占住 pad A。
 CUE_POINT_KIND = 1
 HOT_CUE_KIND = 2
 MEMORY_CUE_KIND = 0
+LOOP_CUE_KIND = 3
 
 
 @dataclass(frozen=True)
@@ -208,7 +210,7 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
             continue
         is_loop = bool(cue.active_loop) or cue.out_ms is not None
         position = int(cue.in_ms)
-        kind = cue_kind_for_index(index)
+        kind = cue_kind_for_index(index, is_loop=is_loop)
         planned.append(
             {
                 "in_ms": int(cue.in_ms),
@@ -223,8 +225,10 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
     return planned
 
 
-def cue_kind_for_index(index: int) -> int:
-    """第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）。"""
+def cue_kind_for_index(index: int, *, is_loop: bool = False) -> int:
+    """第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）；loop 用 Kind=3。"""
+    if is_loop:
+        return LOOP_CUE_KIND
     return CUE_POINT_KIND if index == 0 else HOT_CUE_KIND
 
 
@@ -232,7 +236,9 @@ def _beat_loop_size(track: SetTrack, cue_plan: dict) -> int:
     if not cue_plan["is_loop"] or not track.bpm or cue_plan["out_ms"] is None:
         return 0
     beat_ms = 60_000 / float(track.bpm)
-    return max(1, round((cue_plan["out_ms"] - cue_plan["in_ms"]) / beat_ms))
+    beats = max(1, round((cue_plan["out_ms"] - cue_plan["in_ms"]) / beat_ms))
+    # rekordbox 把拍数打包成 (beats << 16) | 1（实机验证：4 拍 → 0x40001 = 262145）
+    return (beats << 16) | 1
 
 
 def write_rekordbox_set(
@@ -288,8 +294,8 @@ def write_rekordbox_set(
                     Comment=cue["comment"],
                     Color=255,
                     ColorTableIndex=0,
-                    ActiveLoop=1 if cue["is_loop"] else 0,
-                    BeatLoopSize=beat_loop_size,
+                    ActiveLoop=0 if cue["is_loop"] else None,
+                    BeatLoopSize=beat_loop_size if cue["is_loop"] else None,
                     CueMicrosec=0,
                     UUID=cue_uuid,
                 )
@@ -310,9 +316,9 @@ def write_rekordbox_set(
                     "Kind": cue["kind"],
                     "Color": 255,
                     "ColorTableIndex": 0,
-                    "ActiveLoop": 1 if cue["is_loop"] else 0,
+                    "ActiveLoop": 0 if cue["is_loop"] else None,
                     "Comment": cue["comment"],
-                    "BeatLoopSize": beat_loop_size,
+                    "BeatLoopSize": beat_loop_size if cue["is_loop"] else None,
                     "CueMicrosec": 0,
                     "UUID": cue_uuid,
                     "created_at": now,
