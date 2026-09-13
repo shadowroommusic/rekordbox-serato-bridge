@@ -25,6 +25,14 @@ from .serato_export import SetTrack
 
 BACKUP_SUFFIX = "shadow-backup"
 
+# rekordbox 的 cue 类型约定（实机验证）：
+#   0 = memory cue（记忆点）
+#   1 = 曲目的 cue 点（CUE 按钮，不占 pad）
+#   2 = hot cue（占用 pad A-H）
+HOT_CUE_KIND = 2
+MEMORY_CUE_KIND = 0
+CUE_POINT_KIND = 1
+
 
 @dataclass(frozen=True)
 class SeratoSet:
@@ -198,7 +206,7 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
         if cue.in_ms is None:
             continue
         is_loop = bool(cue.active_loop) or cue.out_ms is not None
-        key = (int(cue.in_ms), 1)
+        key = (int(cue.in_ms), HOT_CUE_KIND)
         planned.append(
             {
                 "in_ms": int(cue.in_ms),
@@ -266,7 +274,7 @@ def write_rekordbox_set(
                     ID=cue_id,
                     ContentID=content.ID,
                     ContentUUID=content.UUID,
-                    Kind=1,
+                    Kind=HOT_CUE_KIND,
                     InMsec=in_msec,
                     OutMsec=out_msec,
                     Comment=cue["comment"],
@@ -291,7 +299,7 @@ def write_rekordbox_set(
                     "OutFrame": int(out_msec * 0.15) if out_msec > 0 else 0,
                     "OutMpegFrame": 0,
                     "OutMpegAbs": 0,
-                    "Kind": 1,
+                    "Kind": HOT_CUE_KIND,
                     "Color": 255,
                     "ColorTableIndex": 0,
                     "ActiveLoop": 1 if cue["is_loop"] else 0,

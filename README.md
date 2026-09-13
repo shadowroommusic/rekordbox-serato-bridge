@@ -65,6 +65,16 @@ Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目�
 
 写库会同时更新 `djmdCue` 明细行和 `contentCue` 的 JSON 缓存（rekordbox 两者都读），并创建同名播放列表；完成后重新打开 Rekordbox 就能看到。
 
+写入 cue 时用的是 rekordbox 自己的类型约定（实机验证）：
+
+| `djmdCue.Kind` | 含义 |
+| --- | --- |
+| 0 | memory cue（记忆点，显示为波形上的标记） |
+| 1 | 曲目的 cue 点（CUE 按钮那个；**不占 pad**） |
+| **2** | **hot cue（占 pad A-H）** ← 转换写入用这个 |
+
+hot cue 的 pad 顺序按 cue 行的 ID 升序分配，所以新写的 cue 一律取当前最大 ID 之后的号，保证 A→B→C 的顺序和位置顺序一致。
+
 ## 预览与单曲 staging
 
 ```sh
