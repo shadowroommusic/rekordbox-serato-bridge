@@ -23,10 +23,8 @@ import struct
 from . import serato_markers
 from .colors import SERATO_DEFAULT_RGB
 from .model import CuePoint
-from .serato_markers import MARKERS2_DESC, SeratoMarker
+from .serato_markers import BEATGRID_DESC, BEATGRID_VERSION, MARKERS2_DESC, SeratoMarker, build_beatgrid
 
-BEATGRID_DESC = "Serato BeatGrid"
-BEATGRID_VERSION = b"\x01\x00"
 EXPORT_ROOT_NAME = "ShadowRoom"
 
 
@@ -40,6 +38,7 @@ class SetTrack:
     key: str | None = None
     duration_ms: int | None = None
     cues: "tuple[CuePoint, ...]" = field(default_factory=tuple)
+    beat_anchor_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -78,16 +77,6 @@ def markers_for(track: SetTrack) -> "list[SeratoMarker]":
             markers.append(cue_to_marker(next_cue, cue))
             next_cue += 1
     return markers
-
-
-def build_beatgrid(bpm: float | None, anchor_ms: int = 0) -> bytes:
-    """Serato BeatGrid：单条 terminal marker（位置 + BPM）就足够恒定速度的曲目。"""
-    if not bpm or bpm <= 0:
-        raise ValueError("beatgrid needs a positive bpm")
-    payload = BEATGRID_VERSION + struct.pack(">I", 1)
-    payload += struct.pack(">f", anchor_ms / 1000.0) + struct.pack(">f", float(bpm))
-    payload += b"\x00"
-    return payload
 
 
 def _write_crate(crate_path: Path, tracks_paths: "list[str]") -> Path:
@@ -169,7 +158,10 @@ def convert_set(
         if markers:
             frames[MARKERS2_DESC] = serato_markers.build_markers2(markers)
         if write_beatgrid and track.bpm:
-            anchor = track.cues[0].in_ms if track.cues and track.cues[0].in_ms else 0
+            # 优先用 rekordbox 分析出来的第一拍位置；没有分析数据时退回第一条 cue，再退回 0
+            anchor = getattr(track, "beat_anchor_ms", None)
+            if anchor is None:
+                anchor = track.cues[0].in_ms if track.cues and track.cues[0].in_ms else 0
             frames[BEATGRID_DESC] = build_beatgrid(track.bpm, anchor or 0)
         try:
             if frames:
@@ -291,6 +283,7 @@ def to_set_track(track) -> SetTrack:
         key=track.key,
         duration_ms=track.length_ms,
         cues=tuple(track.cues),
+        beat_anchor_ms=getattr(track, "beat_anchor_ms", None),
     )
 
 

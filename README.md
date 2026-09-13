@@ -10,6 +10,7 @@ This ShadowRoom Music plugin reads Rekordbox 6/7 (through `pyrekordbox`) and Ser
 | --- | --- | --- |
 | Rekordbox | `master.db` 的 `djmdCue` 表（memory cue / hot cue / loop） | `pyrekordbox`，只读加锁读取 |
 | Serato DJ Pro 4.x | **不在** `master.sqlite` 里：cue/loop 写在音频文件的 ID3 GEOB 帧 `Serato Markers2`（或旧版 `Serato Markers_`） | 零依赖直接解析 ID3（MP3 开头 / AIFF `ID3 ` chunk / WAV `id3 ` chunk），v2 与 v1 两种格式都支持 |
+| Serato DJ Pro 4.x（FLAC） | FLAC 的 Vorbis comment：`SERATO_MARKERS_V2` / `SERATO_BEATGRID`（base64 包装） | 自己读写 FLAC 元数据块（保留 STREAMINFO / 其它注释 / 音频数据） |
 
 Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目录），插件的 `read_serato` 会据此定位文件并读取标记；读不到时会在报告里明确写出原因（文件不在、没有标签、容器不支持）。
 
@@ -154,7 +155,15 @@ python3 -m venv .venv
   - 4 拍 / 16 拍 / 手动画的 1.5 秒 loop 都验证了 `OutMsec` + `BeatLoopSize`（整拍用 `(拍数<<16)|1`，非整拍写 0）；
   - Rekordbox 的 4 拍 loop → Serato：Serato 的 saved loops 列表里正常出现（`01:01.4`，可加载播放）；
   - 反向：Serato 文件 → Rekordbox，自动写成 pad C 的黄色 4 拍 loop（`BeatLoopSize=262145`）。
-- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid → Rekordbox 网格（目前只用它取 BPM）；Serato 侧"用户自己保存的 loop"样本对照（本轮用的是我们写进去的 loop，Serato 与 Rekordbox 都确认能读）。
+- 未做：OGG（Serato DJ Pro 本身不支持，Mixxx 也没实现它的 Serato 标签）；WAV 写入（只读支持）；把网格写回 rekordbox（rekordbox 会自己分析导入的曲目，我们只在 rekordbox → Serato 方向写 BeatGrid）。
+
+### BeatGrid 锚点
+
+- **Rekordbox → Serato**：BPM 取 `djmdContent.BPM`，锚点优先取 rekordbox 本地分析文件
+  （`~/Library/Pioneer/rekordbox/share/PIONEER/USBANLZ/.../ANLZ0000.DAT` 的 `beat_grid` 第一拍），
+  没有分析数据时退回第一条 cue 的位置（`readers.beat_anchor_from_analysis`）。
+- **Serato → Rekordbox**：读文件的 `Serato BeatGrid`（terminal marker 的 BPM），
+  写进新曲目的 `BPM` 字段；网格本身交给 rekordbox 自己在导入后分析。
 
 ## cue 颜色
 

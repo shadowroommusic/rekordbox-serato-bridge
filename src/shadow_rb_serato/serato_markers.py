@@ -3,7 +3,10 @@
 Serato DJ Pro 4.x 的 master.sqlite 不保存 cue，它把 cue / loop 写在音频文件里：
 
 * MP3 / AIFF：ID3v2 GEOB 帧 ``Serato Markers2``（v2）或 ``Serato Markers_``（v1）
-* 其它容器 Serato 走各自的元数据方式，本模块不猜测，遇到就明确报告
+* WAV：``id3 `` chunk 里的同一套 GEOB 帧（只读；写不了就明确报错）
+* FLAC：Vorbis comment ``SERATO_MARKERS_V2`` / ``SERATO_BEATGRID``（base64 包装，
+  格式对齐 Mixxx 的实现），已支持读写
+* OGG：Serato DJ Pro 本身不支持这种容器，遇到就明确报告
 
 读取是只读的；写入函数只用于 staging 副本（见 ``staging.py``）。原始音频文件永远
 不会被这个插件修改。
@@ -23,6 +26,18 @@ MARKERS1_DESC = "Serato Markers_"
 BEATGRID_DESC = "Serato BeatGrid"
 MARKERS2_VERSION = b"\x01\x01"
 MARKERS1_VERSION = b"\x02\x05"
+BEATGRID_VERSION = b"\x01\x00"
+
+# FLAC 的 Serato 数据放在 Vorbis comment 里（键名/格式对齐 Mixxx 的
+# src/track/taglib/trackmetadata_xiph.cpp 与 src/track/serato/markers2.cpp）：
+#   SERATO_MARKERS_V2 = base64(前缀 + 0x0101 + base64(0x0101 + 条目 + \0)，再补零到 470)
+#   SERATO_BEATGRID   = base64(前缀 + 0x0100 + marker 数 + markers + footer)
+FLAC_MARKERS2_KEY = "SERATO_MARKERS_V2"
+FLAC_BEATGRID_KEY = "SERATO_BEATGRID"
+FLAC_MARKERS2_PREFIX = b"application/octet-stream\x00\x00Serato Markers2\x00"
+FLAC_BEATGRID_PREFIX = b"application/octet-stream\x00\x00Serato BeatGrid\x00"
+FLAC_MARKERS2_ALLOCATION = 470
+VORBIS_COMMENT_BLOCK = 4
 
 
 @dataclass(frozen=True)
@@ -46,11 +61,129 @@ def _read_cstring(handle: io.BytesIO) -> bytes:
         chunks.append(byte)
 
 
+def _b64decode(value: bytes) -> bytes:
+    """Serato 的 base64 去掉换行、补回被砍掉的填充字符后再解码。"""
+    encoded = value.replace(b"\n", b"").replace(b"\r", b"").strip()
+    padding = b"A==" if len(encoded) % 4 == 1 else b"=" * (-len(encoded) % 4)
+    return base64.b64decode(encoded + padding)
+
+
+def _serato_b64(data: bytes, *, chop_padding: bool = False) -> bytes:
+    """Serato 的 base64 编码：每 72 个字符换行（= 每 54 字节一段）。
+
+    ``chop_padding`` 复刻 Serato 的怪癖：最后一段不足 3 字节时会砍掉一个字符。
+    """
+    out = bytearray()
+    offset = 0
+    while offset < len(data):
+        if offset:
+            out += b"\n"
+        block = data[offset : offset + 54]
+        encoded = base64.b64encode(block).rstrip(b"=")
+        if chop_padding and len(block) % 3:
+            encoded = encoded[:-1]
+        out += encoded
+        offset += len(block)
+    return bytes(out)
+
+
 def _color_to_int(raw: bytes) -> int | None:
     if len(raw) < 3:
         return None
     red, green, blue = raw[0], raw[1], raw[2]
     return (red << 16) | (green << 8) | blue
+
+
+def _read_flac(path: str | Path) -> "tuple[bytes, list[tuple[int, bytes]], bytes]":
+    """读 FLAC 的元数据块，返回 (文件头前缀, [(块类型, 数据)], 音频数据)。"""
+    target = Path(path)
+    data = target.read_bytes()
+    start = data.find(b"fLaC")
+    if start < 0:
+        raise ValueError(f"not a FLAC file: {target.name}")
+    prefix = data[:start]
+    position = start + 4
+    blocks: "list[tuple[int, bytes]]" = []
+    while position + 4 <= len(data):
+        header = data[position]
+        last = header & 0x80
+        block_type = header & 0x7F
+        length = int.from_bytes(data[position + 1 : position + 4], "big")
+        blocks.append((block_type, data[position + 4 : position + 4 + length]))
+        position += 4 + length
+        if last:
+            break
+    return prefix, blocks, data[position:]
+
+
+def _parse_vorbis_comment(body: bytes) -> "tuple[bytes, dict[str, bytes]]":
+    """解析 Vorbis comment 块，返回 (vendor, {键: 值})，**保留键的原始大小写**。"""
+    offset = 0
+    (vendor_length,) = struct.unpack_from("<I", body, offset)
+    offset += 4
+    vendor = body[offset : offset + vendor_length]
+    offset += vendor_length
+    (count,) = struct.unpack_from("<I", body, offset)
+    offset += 4
+    comments: "dict[str, bytes]" = {}
+    for _ in range(count):
+        (size,) = struct.unpack_from("<I", body, offset)
+        offset += 4
+        item = body[offset : offset + size]
+        offset += size
+        key, _, value = item.partition(b"=")
+        comments[key.decode("utf-8", "replace")] = value
+    return vendor, comments
+
+
+def _build_vorbis_comment(vendor: bytes, comments: "dict[str, tuple[str, bytes]]") -> bytes:
+    out = bytearray(struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", len(comments)))
+    for key, value in comments.values():
+        item = key.encode("utf-8") + b"=" + value
+        out += struct.pack("<I", len(item)) + item
+    return bytes(out)
+
+
+def read_flac_comments(path: str | Path) -> "dict[str, bytes]":
+    """读取 FLAC 的 Vorbis comment（键名大写，例如 ``SERATO_MARKERS_V2``）。"""
+    _prefix, blocks, _audio = _read_flac(path)
+    for block_type, body in blocks:
+        if block_type == VORBIS_COMMENT_BLOCK:
+            _vendor, comments = _parse_vorbis_comment(body)
+            return {key.upper(): value for key, value in comments.items()}
+    return {}
+
+
+def write_flac_comments(path: str | Path, updates: "dict[str, bytes]") -> None:
+    """更新 FLAC 的 Vorbis comment（保留 vendor、其它注释、其它元数据块和音频数据）。"""
+    target = Path(path)
+    prefix, blocks, audio = _read_flac(target)
+    vendor = b"ShadowRoom"
+    # 大写键 → (写回时用的原始键名, 值)：不动用户其它注释的大小写
+    comments: "dict[str, tuple[str, bytes]]" = {}
+    found: "int | None" = None
+    for index, (block_type, body) in enumerate(blocks):
+        if block_type == VORBIS_COMMENT_BLOCK:
+            vendor, raw = _parse_vorbis_comment(body)
+            comments = {key.upper(): (key, value) for key, value in raw.items()}
+            found = index
+            break
+    for key, value in updates.items():
+        original = comments.get(key.upper(), (key.upper(), b""))[0]
+        comments[key.upper()] = (original, value)
+    new_block = (VORBIS_COMMENT_BLOCK, _build_vorbis_comment(vendor, comments))
+    if found is None:
+        # STREAMINFO 必须排第一，新块插在它后面
+        blocks.insert(1 if blocks else 0, new_block)
+    else:
+        blocks[found] = new_block
+    out = bytearray(prefix + b"fLaC")
+    for index, (block_type, body) in enumerate(blocks):
+        out.append((0x80 if index == len(blocks) - 1 else 0x00) | block_type)
+        out += len(body).to_bytes(3, "big")
+        out += body
+    out += audio
+    target.write_bytes(bytes(out))
 
 
 def decode_bytes32(raw: bytes) -> bytes:
@@ -85,16 +218,18 @@ def _encode_position(position: int | None) -> bytes:
 
 
 def parse_markers2(data: bytes, source: str = MARKERS2_DESC) -> "list[SeratoMarker]":
-    """解析 ``Serato Markers2`` GEOB 数据。"""
+    """解析 ``Serato Markers2`` GEOB 数据（版本 + base64）。"""
     if data[:2] != MARKERS2_VERSION:
         raise ValueError(f"unsupported Serato Markers2 version: {data[:2]!r}")
     try:
         end = data.index(b"\x00", 2)
     except ValueError:
         end = len(data)
-    encoded = data[2:end].replace(b"\n", b"").replace(b"\r", b"")
-    padding = b"A==" if len(encoded) % 4 == 1 else b"=" * (-len(encoded) % 4)
-    payload = base64.b64decode(encoded + padding)
+    return parse_markers2_binary(_b64decode(data[2:end]), source)
+
+
+def parse_markers2_binary(payload: bytes, source: str = MARKERS2_DESC) -> "list[SeratoMarker]":
+    """解析解码后的 Markers2 内容（0x0101 + 条目 + \\0）；ID3 与 FLAC 共用。"""
     if payload[:2] != MARKERS2_VERSION:
         raise ValueError(f"unsupported Markers2 payload version: {payload[:2]!r}")
     handle = io.BytesIO(payload[2:])
@@ -228,8 +363,56 @@ def parse_beatgrid_bpm(data: bytes) -> float | None:
     return float(bpm) if bpm and bpm > 0 else None
 
 
+def parse_beatgrid_anchor(data: bytes) -> int | None:
+    """取 BeatGrid terminal marker 的位置（毫秒）——就是 Serato 网格的锚点。"""
+    if len(data) < 14:
+        return None
+    count = struct.unpack(">I", data[2:6])[0]
+    if count < 1:
+        return None
+    terminal = 6 + (count - 1) * 8
+    if terminal + 4 > len(data):
+        return None
+    (position,) = struct.unpack(">f", data[terminal : terminal + 4])
+    return int(round(position * 1000))
+
+
+def build_beatgrid(bpm: float | None, anchor_ms: int = 0) -> bytes:
+    """Serato BeatGrid：单条 terminal marker（位置 + BPM）就足够恒定速度的曲目。"""
+    if not bpm or bpm <= 0:
+        raise ValueError("beatgrid needs a positive bpm")
+    payload = BEATGRID_VERSION + struct.pack(">I", 1)
+    payload += struct.pack(">f", anchor_ms / 1000.0) + struct.pack(">f", float(bpm))
+    payload += b"\x00"
+    return payload
+
+
+def build_beatgrid_flac(bpm: float | None, anchor_ms: int = 0) -> bytes:
+    """FLAC 的 ``SERATO_BEATGRID`` 值：base64(前缀 + BeatGrid 数据)。"""
+    return base64.b64encode(FLAC_BEATGRID_PREFIX + build_beatgrid(bpm, anchor_ms))
+
+
+def parse_beatgrid_flac(value: bytes) -> float | None:
+    """解析 FLAC 的 ``SERATO_BEATGRID`` 值。"""
+    raw = _b64decode(value)
+    if raw.startswith(FLAC_BEATGRID_PREFIX):
+        raw = raw[len(FLAC_BEATGRID_PREFIX) :]
+    return parse_beatgrid_bpm(raw)
+
+
 def read_beatgrid_bpm(path: str | Path) -> float | None:
     """文件的 ``Serato BeatGrid`` 标签里的 BPM（Serato 库里 BPM 列经常是空的）。"""
+    if container_of(path) == "flac":
+        try:
+            value = read_flac_comments(path).get(FLAC_BEATGRID_KEY)
+        except (OSError, ValueError):
+            return None
+        if not value:
+            return None
+        try:
+            return parse_beatgrid_flac(value)
+        except (struct.error, ValueError):
+            return None
     try:
         tag = extract_id3_tag(path)
     except OSError:
@@ -279,11 +462,15 @@ def extract_id3_tag(path: str | Path) -> bytes | None:
 
 
 def container_of(path: str | Path) -> str:
-    """按文件头判断容器：mp3 / aiff / wav / unknown。"""
+    """按文件头判断容器：mp3 / aiff / wav / flac / ogg / unknown。"""
     with open(Path(path), "rb") as handle:
         head = handle.read(12)
     if head[:3] == b"ID3":
         return "mp3"
+    if head[:4] == b"fLaC":
+        return "flac"
+    if head[:4] == b"OggS":
+        return "ogg"
     if head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"):
         return "aiff"
     if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
@@ -302,6 +489,22 @@ def _read_id3(handle) -> bytes:
 
 def read_markers(path: str | Path) -> "tuple[list[SeratoMarker], str]":
     """读取一个音频文件的 Serato cue/loop，返回 (markers, 来源描述)。"""
+    container = container_of(path)
+    if container == "flac":
+        try:
+            value = read_flac_comments(path).get(FLAC_MARKERS2_KEY)
+        except (OSError, ValueError) as exc:
+            return [], f"unreadable: {exc}"
+        if not value:
+            return [], "no-serato-markers"
+        try:
+            return parse_markers2_flac(value), MARKERS2_DESC
+        except (struct.error, ValueError):
+            return [], "unreadable-markers2"
+    if container == "ogg":
+        # Serato DJ Pro 本身不支持 OGG，Mixxx 也没有实现它的 Serato 标签解析，
+        # 所以这里明确不猜。
+        return [], "ogg-unsupported"
     try:
         tag = extract_id3_tag(path)
     except OSError as exc:
@@ -371,8 +574,8 @@ def from_cue_points(cues) -> "list[SeratoMarker]":
     return markers
 
 
-def build_markers2(markers: "list[SeratoMarker]") -> bytes:
-    """构造 ``Serato Markers2`` GEOB 数据（用于 staging 副本）。"""
+def build_markers2_binary(markers: "list[SeratoMarker]") -> bytes:
+    """构造 Markers2 的二进制内容（0x0101 + 条目 + \\0）；ID3 与 FLAC 共用。"""
     payload = bytearray(MARKERS2_VERSION)
     for marker in markers:
         if marker.kind == "cue":
@@ -407,6 +610,12 @@ def build_markers2(markers: "list[SeratoMarker]") -> bytes:
             payload += b"LOOP\x00" + struct.pack(">I", len(body) + len(marker.name or "") + 1)
             payload += body + (marker.name or "").encode("utf-8") + b"\x00"
     payload += b"\x00"
+    return bytes(payload)
+
+
+def build_markers2(markers: "list[SeratoMarker]") -> bytes:
+    """构造 ``Serato Markers2`` GEOB 数据（ID3 用，用于 staging 副本）。"""
+    payload = build_markers2_binary(markers)
     encoded = bytearray(base64.b64encode(bytes(payload)).replace(b"=", b"A"))
     index = 72
     while index < len(encoded):
@@ -414,6 +623,40 @@ def build_markers2(markers: "list[SeratoMarker]") -> bytes:
         index += 73
     # Serato 会把整个 GEOB 数据补齐到 470 字节，解析方靠结尾的 \x00 判断 base64 结束。
     return (MARKERS2_VERSION + bytes(encoded)).ljust(470, b"\x00")
+
+
+def build_markers2_flac_binary(inner: bytes) -> bytes:
+    """把 Markers2 二进制内容包装成 FLAC 的 ``SERATO_MARKERS_V2`` 值。
+
+    格式（对齐 Mixxx 的 ``SeratoMarkers2::dumpBase64Encoded``）：
+    前缀 + 0x0101 + Serato 风格 base64(inner) ，补零到至少 470 字节，**再整体 base64 一次**。
+    """
+    outer = FLAC_MARKERS2_PREFIX + MARKERS2_VERSION + _serato_b64(inner, chop_padding=True)
+    size = max(FLAC_MARKERS2_ALLOCATION, len(outer) + 1)
+    return base64.b64encode(outer.ljust(size, b"\x00"))
+
+
+def build_markers2_flac(markers: "list[SeratoMarker]") -> bytes:
+    return build_markers2_flac_binary(build_markers2_binary(markers))
+
+
+def parse_markers2_flac(value: bytes) -> "list[SeratoMarker]":
+    """解析 FLAC 的 ``SERATO_MARKERS_V2`` 值（外层 base64 → 前缀 → ID3 形式）。"""
+    raw = _b64decode(value)
+    if not raw.startswith(FLAC_MARKERS2_PREFIX):
+        raise ValueError("unexpected Serato Markers2 prefix in FLAC tag")
+    return parse_markers2(raw[len(FLAC_MARKERS2_PREFIX) :])
+
+
+def markers2_binary_from_geob(data: bytes) -> bytes:
+    """GEOB 形式的 Markers2 → 二进制内容（写 FLAC 时用）。"""
+    if data[:2] != MARKERS2_VERSION:
+        raise ValueError(f"unsupported Serato Markers2 version: {data[:2]!r}")
+    try:
+        end = data.index(b"\x00", 2)
+    except ValueError:
+        end = len(data)
+    return _b64decode(data[2:end])
 
 
 def _int_to_color(value: int | None) -> bytes:
@@ -435,8 +678,8 @@ def _synchsafe(value: int) -> bytes:
 def replace_geob_tags(path: str | Path, frames: "dict[str, bytes]", *, tag_padding: int = 1024) -> None:
     """把 GEOB 帧写进文件的 ID3 标签（只应作用于 staging 副本）。
 
-    现有标签里的其它帧会被保留；标签整体重建为 ID3v2.4。目前只对 MP3 和 AIFF
-    实现写入，其它容器会明确报错，避免把文件写坏。
+    MP3/AIFF：ID3v2.4 GEOB 帧（其它帧保留）；FLAC：Vorbis comment
+    ``SERATO_MARKERS_V2`` / ``SERATO_BEATGRID``。WAV/OGG 会明确报错，避免把文件写坏。
     """
     target = Path(path)
     container = container_of(target)
@@ -446,7 +689,19 @@ def replace_geob_tags(path: str | Path, frames: "dict[str, bytes]", *, tag_paddi
     if container == "aiff":
         _write_aiff_tag(target, frames, tag_padding)
         return
-    raise ValueError(f"staging writer supports MP3 and AIFF for now, got '{container}': {target.name}")
+    if container == "flac":
+        updates: "dict[str, bytes]" = {}
+        if MARKERS2_DESC in frames:
+            updates[FLAC_MARKERS2_KEY] = build_markers2_flac_binary(
+                markers2_binary_from_geob(frames[MARKERS2_DESC])
+            )
+        if BEATGRID_DESC in frames:
+            updates[FLAC_BEATGRID_KEY] = base64.b64encode(FLAC_BEATGRID_PREFIX + frames[BEATGRID_DESC])
+        write_flac_comments(target, updates)
+        return
+    raise ValueError(
+        f"staging writer supports MP3, AIFF and FLAC for now, got '{container}': {target.name}"
+    )
 
 
 def _build_tag(target: Path, frames: "dict[str, bytes]", tag_padding: int) -> bytes:

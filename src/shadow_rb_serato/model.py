@@ -43,6 +43,8 @@ class Track:
     color: int | str | None
     cues: tuple[CuePoint, ...] = field(default_factory=tuple)
     source_kind: str = "local"
+    # rekordbox 分析出来的第一拍位置（毫秒），用来给 Serato BeatGrid 当锚点
+    beat_anchor_ms: int | None = None
 
 
 def to_json(value: Any) -> Any:

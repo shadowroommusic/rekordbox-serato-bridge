@@ -21,6 +21,37 @@ def _source_kind(path: str) -> str:
     return "local"
 
 
+def beat_anchor_from_analysis(db_dir: str | Path, analysis_path: str) -> int | None:
+    """从 rekordbox 本地分析文件（ANLZ）里取第一拍位置（毫秒）。
+
+    rekordbox 把本地曲目的分析结果放在 ``<db_dir>/share/PIONEER/USBANLZ/.../ANLZ0000.DAT``，
+    路径记在 ``djmdContent.AnalysisDataPath``。这里只用它给 Serato 的 BeatGrid 当锚点。
+    """
+    if not analysis_path:
+        return None
+    try:
+        from pyrekordbox import AnlzFile
+    except ImportError:  # pragma: no cover - optional dependency
+        return None
+    full = Path(db_dir) / "share" / analysis_path.lstrip("/")
+    if not full.is_file():
+        return None
+    try:
+        anlz = AnlzFile.parse_file(str(full))
+    except Exception:  # pragma: no cover - 分析文件损坏时不影响读取
+        return None
+    for tag in anlz.tags:
+        if getattr(tag, "name", "") != "beat_grid":
+            continue
+        entries = list(getattr(tag.content, "entries", []) or [])
+        if entries:
+            time_ms = getattr(entries[0], "time", None)
+            if time_ms is not None:
+                return int(time_ms)
+        break
+    return None
+
+
 def read_rekordbox(database: str | Path, db_dir: str | Path) -> list[Track]:
     """Read a Rekordbox 6/7 database through pyrekordbox without writing it."""
     try:
@@ -69,6 +100,7 @@ def read_rekordbox(database: str | Path, db_dir: str | Path) -> list[Track]:
                     color=_text(content.ColorID) or None,
                     cues=tuple(cues_by_content.get(_text(content.UUID), [])),
                     source_kind=_source_kind(path),
+                    beat_anchor_ms=beat_anchor_from_analysis(db_dir, _text(content.AnalysisDataPath)),
                 )
             )
         return result

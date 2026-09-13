@@ -29,6 +29,10 @@ from shadow_rb_serato.rekordbox_export import (
 )
 from shadow_rb_serato.serato_export import SetTrack, build_beatgrid, convert_set, cue_to_marker, markers_for
 from shadow_rb_serato.serato_markers import (
+    BEATGRID_DESC,
+    FLAC_BEATGRID_KEY,
+    FLAC_MARKERS2_KEY,
+    FLAC_MARKERS2_PREFIX,
     MARKERS1_VERSION,
     MARKERS2_DESC,
     SeratoMarker,
@@ -37,9 +41,13 @@ from shadow_rb_serato.serato_markers import (
     encode_bytes32,
     extract_id3_tag,
     from_cue_points,
+    parse_beatgrid_bpm,
+    parse_beatgrid_anchor,
+    parse_geob_tags,
     parse_markers1,
     parse_markers2,
-    parse_beatgrid_bpm,
+    read_beatgrid_bpm,
+    read_flac_comments,
     read_markers,
     replace_geob_tags,
 )
@@ -190,6 +198,21 @@ def write_fake_wav_with_id3(path: Path, tag: bytes) -> Path:
     return path
 
 
+def write_fake_flac(path: Path, audio: bytes = b"AUDIO" * 16) -> Path:
+    """最小 FLAC：STREAMINFO + 空的 Vorbis comment + 假音频数据。"""
+    streaminfo = struct.pack(">I", 0) + b"\x00" * 30
+
+    def block(block_type: int, body: bytes, last: bool) -> bytes:
+        header = (0x80 if last else 0x00) | block_type
+        return bytes([header]) + len(body).to_bytes(3, "big") + body
+
+    vendor = b"reference libFLAC 1.3.2"
+    comment = struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", 0)
+    data = block(0, streaminfo, False) + block(4, comment, True) + audio
+    path.write_bytes(b"fLaC" + data)
+    return path
+
+
 class SeratoMarkerTests(unittest.TestCase):
     def test_markers2_round_trip(self) -> None:
         markers = [
@@ -240,6 +263,35 @@ class SeratoMarkerTests(unittest.TestCase):
             + b"\x00"
         )
         self.assertAlmostEqual(parse_beatgrid_bpm(two_markers), 128.0, places=3)
+        self.assertEqual(parse_beatgrid_anchor(two_markers), 2000)
+
+    def test_convert_set_uses_rekordbox_beat_anchor(self) -> None:
+        # BeatGrid 的锚点优先用 rekordbox 分析出来的第一拍，没有分析数据时才退回第一条 cue
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = write_fake_mp3(root / "track.mp3")
+            cues = (CuePoint(1, 9000, None, "A", None, None, None),)
+
+            with_anchor = SetTrack(
+                id="rb:1", title="t", artist="", path=str(source), bpm=128.0, cues=cues, beat_anchor_ms=25
+            )
+            report = convert_set([with_anchor], root / "out", name="t")
+            staged = Path(report["tracks"][0]["staged"])
+            payload = parse_geob_tags(extract_id3_tag(staged))[BEATGRID_DESC]
+            self.assertEqual(parse_beatgrid_anchor(payload), 25)
+            self.assertAlmostEqual(parse_beatgrid_bpm(payload), 128.0, places=3)
+
+            without_anchor = SetTrack(id="rb:2", title="t", artist="", path=str(source), bpm=128.0, cues=cues)
+            report2 = convert_set([without_anchor], root / "out2", name="t")
+            staged2 = Path(report2["tracks"][0]["staged"])
+            payload2 = parse_geob_tags(extract_id3_tag(staged2))[BEATGRID_DESC]
+            self.assertEqual(parse_beatgrid_anchor(payload2), 9000)
+
+    def test_beat_anchor_helper_handles_missing_analysis(self) -> None:
+        from shadow_rb_serato.readers import beat_anchor_from_analysis
+
+        self.assertIsNone(beat_anchor_from_analysis("/tmp/does-not-exist", ""))
+        self.assertIsNone(beat_anchor_from_analysis("/tmp/does-not-exist", "/PIONEER/USBANLZ/x/ANLZ0000.DAT"))
 
     def test_markers1_spec_blob_is_read(self) -> None:
         parsed = parse_markers1(build_markers1_blob([(45000, None, 1), (300000, 360000, 3)]))
@@ -302,11 +354,53 @@ class SeratoMarkerTests(unittest.TestCase):
             self.assertEqual(source_label, MARKERS2_DESC)
             self.assertEqual([(m.position_ms, m.name) for m in markers], [(999, "W")])
 
+    def test_flac_markers_and_beatgrid_round_trip(self) -> None:
+        # FLAC 的 Serato 数据在 Vorbis comment 里（SERATO_MARKERS_V2 / SERATO_BEATGRID），
+        # 格式对齐 Mixxx：Markers2 是「前缀 + 0x0101 + base64(内容)」再整体 base64 一次。
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_fake_flac(Path(tmp) / "track.flac")
+            markers = [
+                SeratoMarker("cue", 0, 1234, None, "A", 0xD33D34),
+                SeratoMarker("loop", 0, 5000, 7000, None, None, False),
+            ]
+            replace_geob_tags(
+                path,
+                {MARKERS2_DESC: build_markers2(markers), BEATGRID_DESC: build_beatgrid(140.0, 500)},
+            )
+            read_back, source = read_markers(path)
+            self.assertEqual(container_of(path), "flac")
+            self.assertEqual(source, MARKERS2_DESC)
+            self.assertEqual(
+                [(m.kind, m.position_ms, m.end_ms, m.name) for m in read_back],
+                [("cue", 1234, None, "A"), ("loop", 5000, 7000, None)],
+            )
+            self.assertEqual(read_back[0].color, 0xD33D34)
+            self.assertAlmostEqual(read_beatgrid_bpm(path), 140.0, places=3)
+            # 音频数据与其它元数据块都还在
+            self.assertTrue(path.read_bytes().endswith(b"AUDIO" * 16))
+            comments = read_flac_comments(path)
+            self.assertIn(FLAC_MARKERS2_KEY, comments)
+            self.assertIn(FLAC_BEATGRID_KEY, comments)
+            decoded = base64.b64decode(comments[FLAC_MARKERS2_KEY])
+            self.assertTrue(decoded.startswith(FLAC_MARKERS2_PREFIX))
+            # 再写一次不应破坏结构（Vorbis comment 键不会重复堆积）
+            replace_geob_tags(path, {MARKERS2_DESC: build_markers2(markers)})
+            self.assertEqual(len(read_markers(path)[0]), 2)
+
+    def test_flac_without_serato_tags_reports_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_fake_flac(Path(tmp) / "plain.flac")
+            markers, source = read_markers(path)
+            self.assertEqual(markers, [])
+            self.assertEqual(source, "no-serato-markers")
+            self.assertIsNone(read_beatgrid_bpm(path))
+
     def test_unsupported_containers_are_refused_instead_of_corrupted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "track.flac"
-            path.write_bytes(b"fLaC" + b"\x00" * 64)
-            self.assertEqual(container_of(path), "unknown")
+            path = Path(tmp) / "track.ogg"
+            path.write_bytes(b"OggS" + b"\x00" * 64)
+            self.assertEqual(container_of(path), "ogg")
+            self.assertEqual(read_markers(path)[1], "ogg-unsupported")
             with self.assertRaises(ValueError):
                 replace_geob_tags(path, {MARKERS2_DESC: build_markers2([])})
 
