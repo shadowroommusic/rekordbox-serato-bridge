@@ -18,9 +18,11 @@ One MCP plugin = one repository.
 ## House rules
 
 - **License:** AGPL-3.0 everywhere (see `LICENSE`).
-- **README:** English, user-facing only — features / requirements / install / configuration / tools /
-  usage / safety / troubleshooting / license. Implementation notes belong in `docs/internals.md`,
-  the Chinese translation in `README.zh-CN.md`. See `CONTRIBUTING.md`.
+- **README:** user-facing only — features / requirements / install / configuration / tools / usage /
+  safety / troubleshooting / license. The **intro is bilingual** (one English sentence + the same
+  sentence in Chinese), and so is the GitHub repository description; the rest of `README.md` stays
+  English with the full Chinese text in `README.zh-CN.md`. Implementation notes belong in
+  `docs/internals.md`. See `CONTRIBUTING.md`.
 - **Commits:** `feat(scope):`, `fix(scope):`, `docs(scope):`, `chore(scope):`; author
   `shadowroommusic <shadowroommusic@users.noreply.github.com>` (set per repo via
   `git config user.name` / `user.email`).

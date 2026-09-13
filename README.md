@@ -3,6 +3,8 @@
 An MCP server that moves DJ library data — cues, loops, cue colors and playlists — between
 **Rekordbox 6/7** and **Serato DJ Pro**, in both directions.
 
+在 **Rekordbox 6/7** 与 **Serato DJ Pro** 之间双向搬运 DJ 资料库数据：Cue、Loop、Cue 颜色与播放列表。
+
 Works with any MCP-compatible agent or client.
 
 [中文说明](README.zh-CN.md) · License: [AGPL-3.0](LICENSE)

@@ -5,8 +5,12 @@ ShadowRoom plugin repositories).
 
 ## README style
 
-- `README.md` is **English** and written for users: what it is, features, requirements, install,
-  configuration, tools, usage, safety, troubleshooting, license. Nothing else.
+- `README.md` is written for users: what it is, features, requirements, install, configuration,
+  tools, usage, safety, troubleshooting, license. Nothing else.
+- The **opening lines are bilingual**: one English sentence describing the plugin, then the same
+  sentence in Chinese. The GitHub repository description follows the same pattern
+  (`中文一句话 · English sentence`).
+- The rest of `README.md` is English; the complete Chinese version lives in `README.zh-CN.md`.
 - **No implementation details in the README** — no reverse-engineered formats, byte layouts,
   measured tables or "how we figured it out" stories. Those go to `docs/internals.md`.
 - Keep `README.zh-CN.md` as a Chinese translation with the same structure and headings.
