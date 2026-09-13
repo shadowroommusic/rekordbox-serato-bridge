@@ -25,18 +25,21 @@ from .serato_export import SetTrack
 
 BACKUP_SUFFIX = "shadow-backup"
 
-# rekordbox 的 cue 存储模型（实机验证，用 rekordbox 自己的 XML 导出核对）：
+# rekordbox 的 cue 存储模型 —— 以下是**实测事实**（用 rekordbox 自己的 XML 导出核对
+# `POSITION_MARK Num/Type`），不是猜测：
 #
-#   djmdCue.Kind  = 槽位编号，和 loop 无关
-#       0        = memory cue（波形上的标记）
-#       1..8     = hot cue pad A..H（1=A、2=B、3=C…）
-#   loop 由字段表示，不由 Kind 表示
-#       OutMsec >= 0            → 这是一条 loop（XML 里 Type="4" 且带 End）
-#       BeatLoopSize=(拍数<<16)|1 → 拍数（实机：4 拍 = 262145 = 0x40001）
+# 1. pad 分配按 cue 的**位置顺序**：XML 里 Num=0、1、2… 就是 pad A、B、C…
+# 2. loop 由字段表示，和 Kind 无关：
+#       OutMsec >= 0              → 这是一条 loop（XML 里 Type="4" 且带 End）
+#       BeatLoopSize=(拍数<<16)|1 → 拍数（实测 4 拍 = 262145 = 0x40001）
 #       BeatLoopSize=0            → 任意长度的 loop
+# 3. Kind=0 是 memory cue（不占 pad）。其余 Kind 是 rekordbox 的内部槽位编号：
+#       实测写入 Kind=1、2、3…（按位置顺序）rekordbox 会放进 pad A、B、C…，
+#       而 rekordbox 自己写的行可以是 2/3/5 这类值（例如 pad D 的行是 Kind=5），
+#       所以 Kind ≠ pad 字母序号；确切语义未完全公开，我们只依赖第 1、2 条事实。
 #
-# 所以写入时：按位置排序，第 n 条 cue 用 Kind=n（pad A、B、C…），loop 只额外填
-# OutMsec 和 BeatLoopSize。超过 8 条时降级为 memory cue（Kind=0）保留数据。
+# 写入策略：按位置排序，第 n 条 cue 写 Kind=n（1、2、3…），loop 额外填 OutMsec +
+# BeatLoopSize；超过 8 条没有更多 pad 时降级为 memory cue（Kind=0）保留数据。
 MEMORY_CUE_KIND = 0
 FIRST_PAD_KIND = 1
 LAST_PAD_KIND = 8

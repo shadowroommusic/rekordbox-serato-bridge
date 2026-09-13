@@ -69,12 +69,12 @@ Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目�
 
 | 字段 | 含义 |
 | --- | --- |
-| `djmdCue.Kind = 0` | memory cue（波形上的标记，不占 pad） |
-| `djmdCue.Kind = 1..8` | hot cue 的槽位编号：1 = pad A、2 = pad B、3 = pad C …（**Kind 与 loop 无关**） |
+| `djmdCue.Kind = 0` | memory cue（波形上的标记，不占 pad），memory 也可以是 loop |
+| `djmdCue.Kind = 1..16` | hot cue 的槽位编号（**Kind 与 loop 无关**）。写 `Kind=n` 会落在 pad 上，但 rekordbox 自己写的行可以是 2/3/5 这类值（实测 pad D 的行是 `Kind=5`），所以 **Kind ≠ pad 字母序号**，确切语义仍在实测中 |
 | `djmdCue.OutMsec >= 0` | 这是一条 **loop**（rekordbox XML 里就是 `Type="4"` 且带 `End`），rekordbox 界面显示为黄色循环区 |
 | `djmdCue.BeatLoopSize` | 节拍循环的拍数，打包成 `(拍数 << 16) \| 1`（实测 4 拍 = 262145 = 0x40001）；`0` 表示任意长度循环 |
 
-所以转换写入规则是：**按位置排序，第 n 条 cue 用 `Kind=n`**（pad A、B、C…），loop 只额外填 `OutMsec` 和 `BeatLoopSize`；顺带把每行 ID 取当前最大值之后，保证 pad 顺序和位置顺序一致。超过 8 条时降级为 memory cue 保留数据。实机验证结果（rekordbox 自己的导出）：
+所以转换写入规则是：**按位置排序，第 n 条 cue 用 `Kind=n`**（pad A、B、C…），loop 只额外填 `OutMsec` 和 `BeatLoopSize`；顺带把每行 ID 取当前最大值之后，保证 pad 顺序和位置顺序一致。超过 8 条时降级为 memory cue 保留数据（rekordbox 有 16 个 pad A-P，这条上限待实验确认）。实机验证结果（rekordbox 自己的导出）：
 
 ```
 CONTEXT :
