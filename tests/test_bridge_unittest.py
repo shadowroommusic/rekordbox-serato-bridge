@@ -10,7 +10,14 @@ from shadow_rb_serato import mcp_server
 from shadow_rb_serato.model import CuePoint, Track
 from shadow_rb_serato.preview import preview
 from shadow_rb_serato.readers import read_serato
-from shadow_rb_serato.rekordbox_export import SeratoSet, read_serato_sets, to_rekordbox_xml
+from shadow_rb_serato.rekordbox_export import (
+    CUE_POINT_KIND,
+    HOT_CUE_KIND,
+    SeratoSet,
+    cue_kind_for_index,
+    read_serato_sets,
+    to_rekordbox_xml,
+)
 from shadow_rb_serato.serato_export import SetTrack, build_beatgrid, convert_set, cue_to_marker, markers_for
 from shadow_rb_serato.serato_markers import (
     MARKERS1_VERSION,
@@ -474,6 +481,14 @@ class SetExportTests(unittest.TestCase):
 
 
 class RekordboxExportTests(unittest.TestCase):
+    def test_cue_kind_mapping_matches_rekordbox_pad_order(self) -> None:
+        # 实机验证：第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）。
+        self.assertEqual(cue_kind_for_index(0), CUE_POINT_KIND)
+        self.assertEqual(cue_kind_for_index(1), HOT_CUE_KIND)
+        self.assertEqual(cue_kind_for_index(7), HOT_CUE_KIND)
+        self.assertEqual(CUE_POINT_KIND, 1)
+        self.assertEqual(HOT_CUE_KIND, 2)
+
     def build_serato_database(self, root: Path, mp3: Path) -> Path:
         database = root / "master.sqlite"
         connection = sqlite3.connect(str(database))

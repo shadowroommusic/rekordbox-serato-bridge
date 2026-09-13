@@ -25,13 +25,14 @@ from .serato_export import SetTrack
 
 BACKUP_SUFFIX = "shadow-backup"
 
-# rekordbox 的 cue 类型约定（实机验证）：
-#   0 = memory cue（记忆点）
-#   1 = 曲目的 cue 点（CUE 按钮，不占 pad）
-#   2 = hot cue（占用 pad A-H）
+# rekordbox 的 cue 类型约定（实机验证，用 rekordbox 自己的 XML 导出核对）：
+#   0 = memory cue（记忆点，波形上的标记）
+#   1 = 曲目的 cue 点；第一条 cue 用它，rekordbox 会把它放进 pad A
+#   2 = hot cue；第二条及之后用它，依次占 pad B、C、D…
+# 也就是说：cue 的位置顺序决定 pad 顺序，第一条必须是 Kind=1 才会占住 pad A。
+CUE_POINT_KIND = 1
 HOT_CUE_KIND = 2
 MEMORY_CUE_KIND = 0
-CUE_POINT_KIND = 1
 
 
 @dataclass(frozen=True)
@@ -198,26 +199,33 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
     from pyrekordbox.db6 import tables
 
     existing = {
-        (int(cue.InMsec or 0), int(cue.Kind or 0))
+        int(cue.InMsec or 0)
         for cue in (connection_query.query(tables.DjmdCue).filter_by(ContentID=content.ID).all() if content is not None else [])
     }
     planned: "list[dict]" = []
-    for cue in track.cues:
+    for index, cue in enumerate(track.cues):
         if cue.in_ms is None:
             continue
         is_loop = bool(cue.active_loop) or cue.out_ms is not None
-        key = (int(cue.in_ms), HOT_CUE_KIND)
+        position = int(cue.in_ms)
+        kind = cue_kind_for_index(index)
         planned.append(
             {
                 "in_ms": int(cue.in_ms),
                 "out_ms": int(cue.out_ms) if is_loop and cue.out_ms is not None else None,
                 "comment": str(cue.comment or ""),
                 "is_loop": is_loop,
-                "duplicate": key in existing,
+                "kind": kind,
+                "duplicate": position in existing,
             }
         )
-        existing.add(key)
+        existing.add(position)
     return planned
+
+
+def cue_kind_for_index(index: int) -> int:
+    """第一条 cue 用 Kind=1（曲目 cue 点，占 pad A），其余用 Kind=2（hot cue）。"""
+    return CUE_POINT_KIND if index == 0 else HOT_CUE_KIND
 
 
 def _beat_loop_size(track: SetTrack, cue_plan: dict) -> int:
@@ -274,7 +282,7 @@ def write_rekordbox_set(
                     ID=cue_id,
                     ContentID=content.ID,
                     ContentUUID=content.UUID,
-                    Kind=HOT_CUE_KIND,
+                    Kind=cue["kind"],
                     InMsec=in_msec,
                     OutMsec=out_msec,
                     Comment=cue["comment"],
@@ -299,7 +307,7 @@ def write_rekordbox_set(
                     "OutFrame": int(out_msec * 0.15) if out_msec > 0 else 0,
                     "OutMpegFrame": 0,
                     "OutMpegAbs": 0,
-                    "Kind": HOT_CUE_KIND,
+                    "Kind": cue["kind"],
                     "Color": 255,
                     "ColorTableIndex": 0,
                     "ActiveLoop": 1 if cue["is_loop"] else 0,

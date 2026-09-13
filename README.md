@@ -65,15 +65,20 @@ Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目�
 
 写库会同时更新 `djmdCue` 明细行和 `contentCue` 的 JSON 缓存（rekordbox 两者都读），并创建同名播放列表；完成后重新打开 Rekordbox 就能看到。
 
-写入 cue 时用的是 rekordbox 自己的类型约定（实机验证）：
+写入 cue 时用的是 rekordbox 自己的类型约定（实机验证：写完用 rekordbox 的 XML 导出核对 `POSITION_MARK Num`）：
 
-| `djmdCue.Kind` | 含义 |
-| --- | --- |
-| 0 | memory cue（记忆点，显示为波形上的标记） |
-| 1 | 曲目的 cue 点（CUE 按钮那个；**不占 pad**） |
-| **2** | **hot cue（占 pad A-H）** ← 转换写入用这个 |
+| `djmdCue.Kind` | 含义 | 例子 |
+| --- | --- | --- |
+| 0 | memory cue（记忆点，波形上的标记） | rekordbox 里存的 loop 记忆点 |
+| **1** | 曲目的 cue 点；**第一条 cue 用它，rekordbox 会放进 pad A** | 开头那条 A |
+| **2** | hot cue；第二条及之后用它，依次占 **pad B、C、D…** | 27 秒那条 B |
 
-hot cue 的 pad 顺序按 cue 行的 ID 升序分配，所以新写的 cue 一律取当前最大 ID 之后的号，保证 A→B→C 的顺序和位置顺序一致。
+所以转换写入的规则是：**按位置排序后，第一条写 `Kind=1`，其余写 `Kind=2`**；同时所有新 cue 取当前最大 ID 之后的号，保证 pad 顺序和位置顺序一致。实机验证结果（rekordbox 自己的导出）：
+
+```
+CONTEXT : POSITION_MARK Name="A" Start="0.079"  Num="0"   ← pad A
+          POSITION_MARK Name="B" Start="27.079" Num="1"   ← pad B
+```
 
 ## 预览与单曲 staging
 
