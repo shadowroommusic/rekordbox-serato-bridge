@@ -114,7 +114,16 @@ def parse_markers2(data: bytes, source: str = MARKERS2_DESC) -> "list[SeratoMark
                 SeratoMarker("cue", index, position, None, label or None, _color_to_int(color), None, source)
             )
         elif name == b"LOOP":
-            field1, index, start, finish, field5, field6, color, locked = struct.unpack(">cBII4s4sB?", body[:20])
+            # Serato 官方 LOOP 布局（对齐 Mixxx 的 SeratoMarkers2LoopEntry）：
+            #   00 | index | start(4) | end(4) | FF FF FF FF | 00 | R | G | B | 00 | locked | label
+            if len(body) >= 20 and body[10:14] == b"\xff\xff\xff\xff":
+                _, index, start, finish, _, _, red, green, blue, _, locked = struct.unpack(
+                    ">cBII4sBBBBB?", body[:20]
+                )
+                color = (red << 16) | (green << 8) | blue
+            else:
+                # 兼容本工具 0.2.x 写出的旧布局（magic 全 0、颜色只有 1 字节）
+                _, index, start, finish, _, _, color, locked = struct.unpack(">cBII4s4sB?", body[:20])
             label = body[20:].split(b"\x00")[0].decode("utf-8", "replace")
             markers.append(
                 SeratoMarker("loop", index, start, finish, label or None, color, locked, source)
@@ -343,15 +352,20 @@ def build_markers2(markers: "list[SeratoMarker]") -> bytes:
             payload += b"CUE\x00" + struct.pack(">I", len(body) + len(marker.name or "") + 1)
             payload += body + (marker.name or "").encode("utf-8") + b"\x00"
         elif marker.kind == "loop":
+            # Serato 固定给 loop 用的颜色（Mixxx 里叫 kFixedLoopColor）：Serato 本身不读它，
+            # 但写上能让文件结构和 Serato 自己写的一模一样。
             body = struct.pack(
-                ">cBII4s4sB?",
+                ">cBII4sBBBBB?",
                 b"\x00",
                 marker.index if marker.index is not None else 0,
                 marker.position_ms or 0,
                 marker.end_ms or 0,
-                b"\x00\x00\x00\x00",
-                b"\x00\x00\x00\x00",
-                int(marker.color or 0) & 0xFF,
+                b"\xff\xff\xff\xff",
+                0,
+                0x27,
+                0xAA,
+                0xE1,
+                0,
                 bool(marker.locked),
             )
             payload += b"LOOP\x00" + struct.pack(">I", len(body) + len(marker.name or "") + 1)

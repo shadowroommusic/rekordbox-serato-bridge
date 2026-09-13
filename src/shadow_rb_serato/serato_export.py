@@ -57,7 +57,24 @@ def cue_to_marker(index: int, cue: CuePoint) -> SeratoMarker:
 
 
 def markers_for(track: SetTrack) -> "list[SeratoMarker]":
-    return [cue_to_marker(index, cue) for index, cue in enumerate(track.cues)]
+    """Rekordbox cue/loop → Serato 标记，cue 和 saved loop 各用一套槽位号。
+
+    Serato 里 hot cue 和 saved loop 是两套独立的槽位（各 0..7）：CUE 条目的 index=0
+    就是 hot cue 1，LOOP 条目的 index=0 就是 saved loop 1。如果让 loop 也占 cue 的序号，
+    它后面的 cue 会在 Serato 里串位（实机确认过 index=0/1 → cue 1/2）。
+    """
+    markers: "list[SeratoMarker]" = []
+    next_cue = 0
+    next_loop = 0
+    for cue in track.cues:
+        is_loop = bool(cue.active_loop) or cue.out_ms is not None
+        if is_loop:
+            markers.append(cue_to_marker(next_loop, cue))
+            next_loop += 1
+        else:
+            markers.append(cue_to_marker(next_cue, cue))
+            next_cue += 1
+    return markers
 
 
 def build_beatgrid(bpm: float | None, anchor_ms: int = 0) -> bytes:

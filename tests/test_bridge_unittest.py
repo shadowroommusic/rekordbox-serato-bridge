@@ -1,3 +1,4 @@
+import base64
 import unittest
 import json
 import shutil
@@ -195,6 +196,29 @@ class SeratoMarkerTests(unittest.TestCase):
             [("cue", 12345, None, "intro"), ("cue", 96050, None, None), ("loop", 30000, 60000, "drop")],
         )
         self.assertEqual(parsed[0].color, 0xCC0000)
+
+    def test_markers2_loop_layout_matches_serato_bytes(self) -> None:
+        # Serato 的 LOOP 条目是固定 20 字节头 + label + \0，并且带 FF FF FF FF 魔数
+        # （对齐 Mixxx 的 SeratoMarkers2LoopEntry::dump）：
+        #   00 | index | start(4) | end(4) | FF*4 | 00 | R | G | B | 00 | locked
+        blob = build_markers2([SeratoMarker("loop", 0, 61364, 63079, None, None, False)])
+        encoded = blob[2:].split(b"\x00", 1)[0].replace(b"\n", b"").replace(b"\r", b"")
+        padding = b"A==" if len(encoded) % 4 == 1 else b"=" * (-len(encoded) % 4)
+        payload = base64.b64decode(encoded + padding)
+        self.assertEqual(payload[:2], b"\x01\x01")
+        body = payload[2:]
+        self.assertTrue(body.startswith(b"LOOP\x00"))
+        length = struct.unpack(">I", body[5:9])[0]
+        entry = body[9 : 9 + length]
+        self.assertEqual(entry[0:2], b"\x00\x00")  # unknown 0 + index 0
+        self.assertEqual(struct.unpack(">II", entry[2:10]), (61364, 63079))
+        self.assertEqual(entry[10:14], b"\xff\xff\xff\xff")
+        self.assertEqual(entry[14], 0x00)
+        self.assertEqual(entry[15:18], bytes((0x27, 0xAA, 0xE1)))  # Serato 固定 loop 颜色
+        self.assertEqual(entry[18], 0x00)
+        self.assertEqual(entry[19], 0)  # locked = False
+        self.assertEqual(entry[20:], b"\x00")  # 空 label 的终止符
+        self.assertEqual(len(entry), 21)
 
     def test_markers1_spec_blob_is_read(self) -> None:
         parsed = parse_markers1(build_markers1_blob([(45000, None, 1), (300000, 360000, 3)]))
@@ -496,6 +520,27 @@ class RekordboxExportTests(unittest.TestCase):
         # 超过 16 条没有更多 pad，降级为 memory cue 但保留数据。
         self.assertEqual(cue_kind_for_index(16), MEMORY_CUE_KIND)
         self.assertEqual(cue_kind_for_index(20), MEMORY_CUE_KIND)
+
+    def test_serato_marker_indices_keep_loops_separate(self) -> None:
+        # Serato 的 hot cue / saved loop 是两套独立槽位：loop 不能占 cue 的序号，
+        # 否则 loop 后面的 cue 会在 Serato 里串位（实机确认 index=0/1 → cue 1/2）。
+        track = SetTrack(
+            id="rb:1",
+            title="t",
+            artist="",
+            path="/tmp/t.mp3",
+            cues=(
+                CuePoint(1, 1000, None, "A", None, None, None),
+                CuePoint(2, 2000, None, "B", None, None, None),
+                CuePoint(3, 3000, 4000, None, None, False, None),
+                CuePoint(5, 5000, None, None, None, None, None),
+            ),
+        )
+        markers = markers_for(track)
+        self.assertEqual(
+            [(m.kind, m.index, m.position_ms) for m in markers],
+            [("cue", 0, 1000), ("cue", 1, 2000), ("loop", 0, 3000), ("cue", 2, 5000)],
+        )
 
     def test_beat_loop_size_packs_beats_like_rekordbox(self) -> None:
         track = SetTrack(id="rb:1", title="CONTEXT", artist="", path="/tmp/track.mp3", bpm=140.0)
