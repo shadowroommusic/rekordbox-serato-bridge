@@ -33,6 +33,7 @@ from shadow_rb_serato.serato_markers import (
     from_cue_points,
     parse_markers1,
     parse_markers2,
+    parse_beatgrid_bpm,
     read_markers,
     replace_geob_tags,
 )
@@ -219,6 +220,20 @@ class SeratoMarkerTests(unittest.TestCase):
         self.assertEqual(entry[19], 0)  # locked = False
         self.assertEqual(entry[20:], b"\x00")  # 空 label 的终止符
         self.assertEqual(len(entry), 21)
+
+    def test_beatgrid_bpm_is_read_back(self) -> None:
+        # Serato 库里 BPM 列经常是空的，所以要从文件的 Serato BeatGrid 标签里兜底读 BPM。
+        blob = build_beatgrid(140.0, 0)
+        self.assertAlmostEqual(parse_beatgrid_bpm(blob), 140.0, places=3)
+        # 非 terminal marker 也要能跳过（这里 2 个 marker：1 个非 terminal + terminal）
+        two_markers = (
+            b"\x01\x00"
+            + struct.pack(">I", 2)
+            + struct.pack(">fI", 1.0, 4)
+            + struct.pack(">ff", 2.0, 128.0)
+            + b"\x00"
+        )
+        self.assertAlmostEqual(parse_beatgrid_bpm(two_markers), 128.0, places=3)
 
     def test_markers1_spec_blob_is_read(self) -> None:
         parsed = parse_markers1(build_markers1_blob([(45000, None, 1), (300000, 360000, 3)]))

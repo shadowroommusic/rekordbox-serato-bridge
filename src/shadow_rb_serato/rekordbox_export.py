@@ -69,11 +69,15 @@ def _asset_tracks(connection: sqlite3.Connection, asset_ids: "list[int] | None",
         if str(file_name).startswith("streaming://"):
             continue
         path = serato_local_path(str(portable_id or ""), str(file_name))
+        track_bpm = float(bpm) if bpm else None
         cues: "tuple[CuePoint, ...]" = ()
         if Path(path).is_file():
             try:
                 markers, _source = serato_markers.read_markers(path)
                 cues = serato_markers.to_cue_points(markers)
+                if track_bpm is None:
+                    # Serato 库里 BPM 列经常是空的，退回读文件里的 Serato BeatGrid
+                    track_bpm = serato_markers.read_beatgrid_bpm(path)
             except Exception as exc:  # pragma: no cover - defensive
                 warnings.append(f"could not read Serato markers from {path}: {exc}")
         else:
@@ -84,7 +88,7 @@ def _asset_tracks(connection: sqlite3.Connection, asset_ids: "list[int] | None",
                 title=str(name or Path(path).stem),
                 artist=str(artist or ""),
                 path=path,
-                bpm=float(bpm) if bpm else None,
+                bpm=track_bpm,
                 key=str(key) if key else None,
                 duration_ms=int(length_ms) if length_ms else None,
                 cues=cues,
@@ -103,12 +107,29 @@ def read_serato_sets(database: str | Path, *, include_all_local: bool = True) ->
     try:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(container_asset)").fetchall()}
         link_column = "location_container_id" if "location_container_id" in columns else "container_id"
+        tables = {
+            row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+        # Serato DJ Pro 4.x 把 crate 的曲目挂在 location_container 上：
+        #   container(crate) → location_container → container_asset → asset
+        # 旧版本直接用 crate id 当 container_asset 的外键，所以要两种都支持。
+        use_location_container = "location_container" in tables
         sets: "list[SeratoSet]" = []
         for crate_id, crate_name in connection.execute("SELECT id, name FROM container WHERE type = 1 ORDER BY name").fetchall():
+            link_ids: "list[int]" = [int(crate_id)]
+            if use_location_container:
+                link_ids = [
+                    int(row[0])
+                    for row in connection.execute(
+                        "SELECT id FROM location_container WHERE container_id = ?", (crate_id,)
+                    ).fetchall()
+                ] or [int(crate_id)]
+            placeholders = ",".join("?" for _ in link_ids)
             asset_ids = [
                 row[0]
                 for row in connection.execute(
-                    f"SELECT asset_id FROM container_asset WHERE {link_column} = ? ORDER BY list_order", (crate_id,)
+                    f"SELECT asset_id FROM container_asset WHERE {link_column} IN ({placeholders}) ORDER BY list_order",
+                    link_ids,
                 ).fetchall()
             ]
             sets.append(SeratoSet(str(crate_name or f"crate-{crate_id}"), _asset_tracks(connection, asset_ids, warnings)))

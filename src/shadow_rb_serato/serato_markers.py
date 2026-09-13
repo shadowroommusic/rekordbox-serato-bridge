@@ -209,6 +209,42 @@ def parse_geob_tags(payload: bytes) -> "dict[str, bytes]":
     return tags
 
 
+def parse_beatgrid_bpm(data: bytes) -> float | None:
+    """从 ``Serato BeatGrid`` GEOB 里取 terminal marker 的 BPM。
+
+    布局（对齐 Mixxx 的 SeratoBeatGrid::parseID3）：version(2) + numMarkers(4) +
+    非 terminal marker（每条 8 字节：position f32 + beatsTillNext u32）+ terminal
+    marker（position f32 + bpm f32）+ footer(1)。
+    """
+    if len(data) < 14:
+        return None
+    count = struct.unpack(">I", data[2:6])[0]
+    if count < 1:
+        return None
+    terminal = 6 + (count - 1) * 8
+    if terminal + 8 > len(data):
+        return None
+    _position, bpm = struct.unpack(">ff", data[terminal : terminal + 8])
+    return float(bpm) if bpm and bpm > 0 else None
+
+
+def read_beatgrid_bpm(path: str | Path) -> float | None:
+    """文件的 ``Serato BeatGrid`` 标签里的 BPM（Serato 库里 BPM 列经常是空的）。"""
+    try:
+        tag = extract_id3_tag(path)
+    except OSError:
+        return None
+    if not tag:
+        return None
+    payload = parse_geob_tags(tag).get(BEATGRID_DESC)
+    if not payload:
+        return None
+    try:
+        return parse_beatgrid_bpm(payload)
+    except (struct.error, ValueError):
+        return None
+
+
 def extract_id3_tag(path: str | Path) -> bytes | None:
     """读取 MP3 开头、AIFF ``ID3 `` chunk 或 WAV ``id3 `` chunk 里的 ID3v2 标签。"""
     target = Path(path)
