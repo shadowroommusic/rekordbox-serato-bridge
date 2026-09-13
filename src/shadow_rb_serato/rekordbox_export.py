@@ -19,30 +19,31 @@ from urllib.parse import quote
 import xml.etree.ElementTree as ElementTree
 
 from . import serato_markers
-from .model import CuePoint
+from .model import CuePoint, PAD_KINDS
 from .readers import serato_local_path
 from .serato_export import SetTrack
 
 BACKUP_SUFFIX = "shadow-backup"
 
-# rekordbox 的 cue 存储模型 —— 以下是**实测事实**（用 rekordbox 自己的 XML 导出核对
-# `POSITION_MARK Num/Type`），不是猜测：
+# rekordbox 的 cue 存储模型 —— 全部是**实机实测**（2026-09-14 用 16 条对照 cue 逐 pad
+# 核对，另外也用 rekordbox 自己的 XML 导出核对过 `POSITION_MARK Num/Type`）：
 #
-# 1. pad 分配按 cue 的**位置顺序**：XML 里 Num=0、1、2… 就是 pad A、B、C…
-# 2. loop 由字段表示，和 Kind 无关：
-#       OutMsec >= 0              → 这是一条 loop（XML 里 Type="4" 且带 End）
-#       BeatLoopSize=(拍数<<16)|1 → 拍数（实测 4 拍 = 262145 = 0x40001）
-#       BeatLoopSize=0            → 任意长度的 loop
-# 3. Kind=0 是 memory cue（不占 pad）。其余 Kind 是 rekordbox 的内部槽位编号：
-#       实测写入 Kind=1、2、3…（按位置顺序）rekordbox 会放进 pad A、B、C…，
-#       而 rekordbox 自己写的行可以是 2/3/5 这类值（例如 pad D 的行是 Kind=5），
-#       所以 Kind ≠ pad 字母序号；确切语义未完全公开，我们只依赖第 1、2 条事实。
+# 1. pad 字母只由 `djmdCue.Kind` 决定，和 cue 的位置、行 ID 顺序都无关：
+#       Kind=1,2,3  → pad A,B,C
+#       Kind=4      → rekordbox 不显示（实测：写了 2 条，界面上都找不到，必须避开）
+#       Kind=5..17  → pad D..P
+#    即 pad A..P 的 Kind 是 (1,2,3,5,6,…,17)，见 model.PAD_KINDS。
+# 2. loop 由字段表示，与 Kind 无关：
+#       OutMsec >= 0              → loop（界面显示黄色循环图标）
+#       BeatLoopSize=(拍数<<16)|1 → 拍数（实测 4 拍 = 262145 = 0x40001、16 拍 = 1048577）
+#       BeatLoopSize=0            → 任意长度 loop（实测手动 1.5s loop 就是这种写法）
+# 3. Kind=0 是 memory cue（不占 pad，也可以是 loop）。
 #
-# 写入策略：按位置排序，第 n 条 cue 写 Kind=n（1、2、3…），loop 额外填 OutMsec +
-# BeatLoopSize；超过 8 条没有更多 pad 时降级为 memory cue（Kind=0）保留数据。
+# 写入策略：第 n 条 cue 用 PAD_KINDS[n]，loop 额外填 OutMsec + BeatLoopSize；
+# 超过 16 条没有更多 pad 时降级为 memory cue（Kind=0）保留数据。
 MEMORY_CUE_KIND = 0
 FIRST_PAD_KIND = 1
-LAST_PAD_KIND = 8
+LAST_PAD_KIND = 17
 
 
 @dataclass(frozen=True)
@@ -234,21 +235,29 @@ def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
 
 
 def cue_kind_for_index(index: int) -> int:
-    """按位置顺序给出槽位：第 1 条 → pad A（Kind=1）、第 2 条 → pad B（Kind=2）……
+    """第 n 条 cue 写进哪个 pad：pad A..P 的 Kind 实测是 (1,2,3,5,6,…,17)。
 
-    超过 8 条时没有更多 pad，降级成 memory cue（Kind=0）以保留数据。
+    Kind=4 在 rekordbox 里不显示，所以第 4 个槽位（pad D）要写 5、后面依次顺延。
+    超过 16 条时没有更多 pad，降级成 memory cue（Kind=0）以保留数据。
     """
-    kind = index + 1
-    return kind if FIRST_PAD_KIND <= kind <= LAST_PAD_KIND else MEMORY_CUE_KIND
+    if 0 <= index < len(PAD_KINDS):
+        return PAD_KINDS[index]
+    return MEMORY_CUE_KIND
 
 
 def _beat_loop_size(track: SetTrack, cue_plan: dict) -> int:
+    """把 loop 长度换算成 rekordbox 的拍数编码；不对拍的 loop 写 0（任意长度）。"""
     if not cue_plan["is_loop"] or not track.bpm or cue_plan["out_ms"] is None:
         return 0
     beat_ms = 60_000 / float(track.bpm)
-    beats = max(1, round((cue_plan["out_ms"] - cue_plan["in_ms"]) / beat_ms))
+    beats = (cue_plan["out_ms"] - cue_plan["in_ms"]) / beat_ms
+    rounded = round(beats)
+    if rounded < 1 or abs(beats - rounded) > 0.02:
+        # 不是整拍（例如 Serato 里随手拉的 saved loop）：交给 rekordbox 当任意长度循环，
+        # 精确的 In/Out 仍然保留（实机验证：BeatLoopSize=0 一样显示成黄色 loop）。
+        return 0
     # rekordbox 把拍数打包成 (beats << 16) | 1（实机验证：4 拍 → 0x40001 = 262145）
-    return (beats << 16) | 1
+    return (rounded << 16) | 1
 
 
 def write_rekordbox_set(

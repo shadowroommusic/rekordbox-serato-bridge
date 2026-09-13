@@ -65,16 +65,18 @@ Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目�
 
 写库会同时更新 `djmdCue` 明细行和 `contentCue` 的 JSON 缓存（rekordbox 两者都读），并创建同名播放列表；完成后重新打开 Rekordbox 就能看到。
 
-写入 cue 时用的是 rekordbox 自己的存储模型（实机验证：写完用 rekordbox 的 XML 导出核对 `POSITION_MARK Num` / `Type`）：
+写入 cue 时用的是 rekordbox 自己的存储模型（2026-09-14 用 16 条对照 cue 逐 pad 实机核对，另外用 rekordbox 自己的 XML 导出核对过 `POSITION_MARK Num` / `Type`）：
 
 | 字段 | 含义 |
 | --- | --- |
 | `djmdCue.Kind = 0` | memory cue（波形上的标记，不占 pad），memory 也可以是 loop |
-| `djmdCue.Kind = 1..16` | hot cue 的槽位编号（**Kind 与 loop 无关**）。写 `Kind=n` 会落在 pad 上，但 rekordbox 自己写的行可以是 2/3/5 这类值（实测 pad D 的行是 `Kind=5`），所以 **Kind ≠ pad 字母序号**，确切语义仍在实测中 |
-| `djmdCue.OutMsec >= 0` | 这是一条 **loop**（rekordbox XML 里就是 `Type="4"` 且带 `End`），rekordbox 界面显示为黄色循环区 |
-| `djmdCue.BeatLoopSize` | 节拍循环的拍数，打包成 `(拍数 << 16) \| 1`（实测 4 拍 = 262145 = 0x40001）；`0` 表示任意长度循环 |
+| `djmdCue.Kind = 1,2,3` | pad A、B、C |
+| `djmdCue.Kind = 4` | **rekordbox 不显示**（实测写了 2 条，界面上都找不到），必须避开 |
+| `djmdCue.Kind = 5..17` | pad D、E … P（共 16 个 pad） |
+| `djmdCue.OutMsec >= 0` | 这是一条 **loop**（rekordbox XML 里就是 `Type="4"` 且带 `End`），rekordbox 界面显示为黄色循环图标 |
+| `djmdCue.BeatLoopSize` | 节拍循环的拍数，打包成 `(拍数 << 16) \| 1`（实测 4 拍 = 262145 = 0x40001、16 拍 = 1048577）；`0` 表示任意长度循环（实测手动 1.5s loop 就是这个写法） |
 
-所以转换写入规则是：**按位置排序，第 n 条 cue 用 `Kind=n`**（pad A、B、C…），loop 只额外填 `OutMsec` 和 `BeatLoopSize`；顺带把每行 ID 取当前最大值之后，保证 pad 顺序和位置顺序一致。超过 8 条时降级为 memory cue 保留数据（rekordbox 有 16 个 pad A-P，这条上限待实验确认）。实机验证结果（rekordbox 自己的导出）：
+**pad 字母只由 `Kind` 决定**（和 cue 在曲中的位置、行 ID 顺序都无关），所以写入规则是：第 n 条 cue 用 `PAD_KINDS[n]`，其中 `PAD_KINDS = (1,2,3,5,6,…,17)` —— 第 4 个 pad（D）必须写 5。loop 额外填 `OutMsec` 和 `BeatLoopSize`（不对拍的 loop 写 0，保留精确 In/Out）；超过 16 条时降级为 memory cue 保留数据。实机验证结果（rekordbox 自己的导出）：
 
 ```
 CONTEXT :

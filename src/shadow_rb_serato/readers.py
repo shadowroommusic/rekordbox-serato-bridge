@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .model import CuePoint, Track
+from .model import CuePoint, Track, pad_rank
 from . import serato_markers
 
 
@@ -44,6 +44,10 @@ def read_rekordbox(database: str | Path, db_dir: str | Path) -> list[Track]:
                     beat_loop_size=int(cue.BeatLoopSize) if cue.BeatLoopSize is not None else None,
                 )
             )
+        # pad 字母由 Kind 决定（A..P = 1,2,3,5,…,17），导出去 Serato 时按 pad 顺序排，
+        # 这样 rekordbox 的 pad A/B/C 才会落在 Serato 的 cue 1/2/3 上。
+        for cues in cues_by_content.values():
+            cues.sort(key=lambda cue: (pad_rank(cue.kind), cue.in_ms or 0))
         result: list[Track] = []
         for content in contents:
             path = _text(content.FolderPath)

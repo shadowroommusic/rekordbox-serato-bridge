@@ -484,14 +484,17 @@ class SetExportTests(unittest.TestCase):
 
 class RekordboxExportTests(unittest.TestCase):
     def test_cue_kind_mapping_matches_rekordbox_pad_order(self) -> None:
-        # 实机验证（用 rekordbox 自己的 XML 导出核对）：Kind 就是槽位编号，
-        # 1 = pad A、2 = pad B、3 = pad C…；loop 与 Kind 无关。
+        # 实机实测（2026-09-14，16 条对照 cue 逐 pad 核对）：pad A..P 的 Kind 是
+        # (1,2,3,5,6,…,17)；Kind=4 在 rekordbox 界面里不显示，必须跳过。
         self.assertEqual(cue_kind_for_index(0), FIRST_PAD_KIND)
         self.assertEqual(cue_kind_for_index(1), 2)
         self.assertEqual(cue_kind_for_index(2), 3)
-        self.assertEqual(cue_kind_for_index(7), LAST_PAD_KIND)
-        # 超过 8 条没有更多 pad，降级为 memory cue 但保留数据。
-        self.assertEqual(cue_kind_for_index(8), MEMORY_CUE_KIND)
+        self.assertEqual(cue_kind_for_index(3), 5)  # pad D 是 5，不是 4
+        self.assertEqual(cue_kind_for_index(4), 6)
+        self.assertEqual(cue_kind_for_index(15), LAST_PAD_KIND)
+        self.assertNotIn(4, [cue_kind_for_index(index) for index in range(16)])
+        # 超过 16 条没有更多 pad，降级为 memory cue 但保留数据。
+        self.assertEqual(cue_kind_for_index(16), MEMORY_CUE_KIND)
         self.assertEqual(cue_kind_for_index(20), MEMORY_CUE_KIND)
 
     def test_beat_loop_size_packs_beats_like_rekordbox(self) -> None:
@@ -500,6 +503,12 @@ class RekordboxExportTests(unittest.TestCase):
         # 1715 ms @140bpm = 4.001 拍 → (4 << 16) | 1 = 262145（与 rekordbox 实测值一致）
         self.assertEqual(_beat_loop_size(track, plan), 262145)
         self.assertEqual(_beat_loop_size(track, {"is_loop": False, "in_ms": 0, "out_ms": None}), 0)
+        # 16 拍（实机值 1048577）
+        self.assertEqual(
+            _beat_loop_size(track, {"is_loop": True, "in_ms": 0, "out_ms": 6857}), 1048577
+        )
+        # 不对拍的 loop（Serato 里随手拉的 1.5s）写 0 → rekordbox 按任意长度显示
+        self.assertEqual(_beat_loop_size(track, {"is_loop": True, "in_ms": 0, "out_ms": 1500}), 0)
 
     def build_serato_database(self, root: Path, mp3: Path) -> Path:
         database = root / "master.sqlite"

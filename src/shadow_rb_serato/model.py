@@ -4,6 +4,19 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
+# pad A..P 对应的 djmdCue.Kind（2026-09-14 实机实测：16 条对照 cue 逐 pad 核对）。
+# Kind=4 在 rekordbox 界面里不显示（写了也找不到），所以第 4 个 pad（D）用 5。
+PAD_KINDS = (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+
+
+def pad_rank(kind: int) -> int:
+    """Kind → pad 顺序（0=A…15=P）；memory（0）和未知值排到最后。"""
+    try:
+        return PAD_KINDS.index(int(kind))
+    except ValueError:
+        return len(PAD_KINDS)
+
+
 @dataclass(frozen=True)
 class CuePoint:
     kind: int
