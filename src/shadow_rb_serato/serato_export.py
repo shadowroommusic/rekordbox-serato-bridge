@@ -285,6 +285,8 @@ def read_rekordbox_sets(database: str | Path, db_dir: str | Path) -> "list[Rekor
     tracks_by_id = {track.source_id: track for track in read_rekordbox(database, db_dir)}
     db = Rekordbox6Database(path=database, db_dir=db_dir, unlock=True)
     try:
+        # 播放列表成员用数字 ContentID 引用曲目，而我们的 Track 用 UUID 作为 key。
+        id_to_uuid = {str(content.ID): str(content.UUID) for content in db.get_content().all()}
         sets: "list[RekordboxSet]" = []
         for playlist in db.get_playlist().all():
             name = str(getattr(playlist, "Name", "") or "")
@@ -292,7 +294,7 @@ def read_rekordbox_sets(database: str | Path, db_dir: str | Path) -> "list[Rekor
             members: "list[SetTrack]" = []
             for row in rows:
                 content_id = str(getattr(row, "ContentID", "") or "")
-                track = tracks_by_id.get(content_id)
+                track = tracks_by_id.get(id_to_uuid.get(content_id, content_id))
                 if track is not None:
                     members.append(to_set_track(track))
             sets.append(RekordboxSet(name, members))

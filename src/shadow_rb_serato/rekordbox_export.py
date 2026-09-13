@@ -187,9 +187,11 @@ def _backup_database(database: Path) -> str:
 
 def _cue_plan(connection_query, track: SetTrack, content) -> "list[dict]":
     """算出一条曲目还需要写哪些 cue（跳过已存在的同位置 hot cue）。"""
+    from pyrekordbox.db6 import tables
+
     existing = {
         (int(cue.InMsec or 0), int(cue.Kind or 0))
-        for cue in (connection_query.get_content_cue(ContentID=content.ID).all() if content is not None else [])
+        for cue in (connection_query.query(tables.DjmdCue).filter_by(ContentID=content.ID).all() if content is not None else [])
     }
     planned: "list[dict]" = []
     for cue in track.cues:
