@@ -13,6 +13,11 @@ This ShadowRoom Music plugin reads Rekordbox 6/7 (through `pyrekordbox`) and Ser
 
 Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目录），插件的 `read_serato` 会据此定位文件并读取标记；读不到时会在报告里明确写出原因（文件不在、没有标签、容器不支持）。
 
+两个实测细节：
+
+- **热 cue 和 saved loop 是两套独立槽位**（CUE 条目 / LOOP 条目各自的 `index`，0 = 第 1 个），写 tag 时不能共用一个计数器，否则 loop 后面的 cue 会串位；LOOP 条目的字节布局固定为 `00 | index | start(4) | end(4) | FF FF FF FF | 00 | R | G | B | 00 | locked | label`（对齐 Serato 官方实现，已用 Serato 4.0.0 实机确认能读出来）。
+- Serato 库的 `asset.bpm` 经常是空的，BPM 兜底从文件里的 `Serato BeatGrid` 帧读（`parse_beatgrid_bpm`）；crate 的曲目在 Serato 4.x 里走 `container → location_container → container_asset → asset`，旧版本直接挂在 crate id 上，两种结构都支持。
+
 ## 两个转换方向
 
 | 方向 | 命令 | 输入 |
@@ -85,7 +90,7 @@ CONTEXT :
   POSITION_MARK Name=""  Type="4" Start="61.364" End="63.079" Num="2"    ← pad C，4 拍 loop
 ```
 
-反向（Serato → Rekordbox）同样保留 loop：Serato 的 `LOOP` 标记写出 `OutMsec` + 按 BPM 换算的 `BeatLoopSize`，回到 rekordbox 就是一条黄色循环区。
+反向（Serato → Rekordbox）同样保留 loop：Serato 的 `LOOP` 标记写出 `OutMsec` + `BeatLoopSize`（按 BPM 换算拍数，Serato 库里没 BPM 时从文件的 Serato BeatGrid 兜底读），回到 rekordbox 就是一条黄色循环区；如果 loop 不是整拍，就写 `BeatLoopSize=0`，精确的 In/Out 仍然保留。
 
 ## 预览与单曲 staging
 
@@ -143,8 +148,13 @@ python3 -m venv .venv
 
 ## 已验证 / 未做
 
-- 已验证：真实 Rekordbox 库（115 曲 / 80 首带 cue）与真实 Serato 库双向预览；设备 ANLZ 里的 cue/loop 读出并转成 Serato Markers2 + BeatGrid；Markers2 用独立实现（`serato-tools`）交叉校验通过；Serato 标记 → Rekordbox 库（djmdCue + contentCue 缓存 + 播放列表）在库副本上写入并回读一致。
-- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid → Rekordbox 网格（目前只带 BPM/常量网格）；cue 颜色映射（Rekordbox 颜色表与 Serato 调色板不同，目前 Color 留空）。
+- 已验证：真实 Rekordbox 库与真实 Serato 库双向预览；设备 ANLZ 里的 cue/loop 读出并转成 Serato Markers2 + BeatGrid；Markers2 用独立实现（`serato-tools`）交叉校验通过；Serato 标记 → Rekordbox 库（djmdCue + contentCue 缓存 + 播放列表）写入并回读一致。
+- 2026-09-14 实机闭环（Rekordbox 7 + Serato DJ Pro 4.0.0，用户机上跑通）：
+  - 用 16 条对照 cue 逐 pad 核对出 pad A..P 的 `Kind` = (1,2,3,5,6,…,17)，**Kind=4 在 rekordbox 里不显示**（写它等于丢 cue）；
+  - 4 拍 / 16 拍 / 手动画的 1.5 秒 loop 都验证了 `OutMsec` + `BeatLoopSize`（整拍用 `(拍数<<16)|1`，非整拍写 0）；
+  - Rekordbox 的 4 拍 loop → Serato：Serato 的 saved loops 列表里正常出现（`01:01.4`，可加载播放）；
+  - 反向：Serato 文件 → Rekordbox，自动写成 pad C 的黄色 4 拍 loop（`BeatLoopSize=262145`）。
+- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid → Rekordbox 网格（目前只用它取 BPM）；cue 颜色映射（Rekordbox 颜色表与 Serato 调色板不同，目前 Color 留空）；Serato 侧"用户自己保存的 loop"样本对照（本轮用的是我们写进去的 loop，Serato 与 Rekordbox 都确认能读）。
 
 ## License
 
