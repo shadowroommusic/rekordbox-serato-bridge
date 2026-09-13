@@ -249,10 +249,14 @@ def write_rekordbox_set(
         written = 0
         new_entries: "list[dict]" = []
         now = datetime.now(timezone.utc).isoformat()
+        # rekordbox 的 hot cue 槽位（A/B/C…）按 cue 行的 ID 顺序分配，新 cue 必须排在
+        # 已有 cue 之后，否则会插到 A 槽去。这里从全表最大 ID 往后取号。
+        next_id = max((int(row.ID) for row in db.query(tables.DjmdCue).all() if str(row.ID).isdigit()), default=0)
         for cue in cue_plan:
             if cue["duplicate"]:
                 continue
-            cue_id = db.generate_unused_id(tables.DjmdCue)
+            next_id += 1
+            cue_id = str(next_id)
             cue_uuid = str(uuid4())
             in_msec = cue["in_ms"]
             out_msec = cue["out_ms"] if cue["out_ms"] is not None else -1
@@ -266,7 +270,8 @@ def write_rekordbox_set(
                     InMsec=in_msec,
                     OutMsec=out_msec,
                     Comment=cue["comment"],
-                    Color=-1,
+                    Color=255,
+                    ColorTableIndex=0,
                     ActiveLoop=1 if cue["is_loop"] else 0,
                     BeatLoopSize=beat_loop_size,
                     CueMicrosec=0,
@@ -287,7 +292,8 @@ def write_rekordbox_set(
                     "OutMpegFrame": 0,
                     "OutMpegAbs": 0,
                     "Kind": 1,
-                    "Color": -1,
+                    "Color": 255,
+                    "ColorTableIndex": 0,
                     "ActiveLoop": 1 if cue["is_loop"] else 0,
                     "Comment": cue["comment"],
                     "BeatLoopSize": beat_loop_size,
