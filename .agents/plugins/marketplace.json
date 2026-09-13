@@ -1,0 +1,20 @@
+{
+  "name": "shadowroom",
+  "interface": {
+    "displayName": "ShadowRoom"
+  },
+  "plugins": [
+    {
+      "name": "rekordbox-serato-bridge",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Music"
+    }
+  ]
+}

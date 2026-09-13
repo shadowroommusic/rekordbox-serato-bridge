@@ -1,0 +1,20 @@
+# Python build and cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Local environments
+.venv/
+venv/
+
+# Plugin runtime output
+.yue-jobs/
+*.staging/
+preview*.json
+plan*.json
+duplicates*.json
+
+# OS noise
+.DS_Store
