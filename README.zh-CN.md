@@ -3,6 +3,8 @@
 一个 MCP 服务器：在 **Rekordbox 6/7** 和 **Serato DJ Pro** 之间双向搬运 DJ 资料库数据 ——
 Cue、Loop、Cue 颜色和播放列表。
 
+任何支持 MCP 的 agent / 客户端都可以直接使用。
+
 [English](README.md) · 许可证：[AGPL-3.0](LICENSE)
 
 ## 功能
