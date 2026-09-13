@@ -8,6 +8,7 @@ It reads Rekordbox 6/7 through `pyrekordbox` and Serato's `master.sqlite` in rea
 
 ```sh
 python3 -m venv .venv
+.venv/bin/pip install -U pip
 .venv/bin/pip install -e .
 ```
 
