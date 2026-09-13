@@ -33,6 +33,14 @@ One MCP plugin = one repository.
 
 ## Roadmap
 
+### Where this plugin sits
+
+`shadow-music-generator` is a **lightweight job queue + backend adapter layer**: it never bundles a
+model and has no ML dependencies, so it can be embedded in the app. The heavy generation stays
+outside — a local GPU machine, a rented box over ssh, or a cloud API — and is reached through an
+adapter (`SHADOW_PIPELINE_FACTORY`). YuE2 itself needs Linux + an NVIDIA GPU (BF16, 24 GB), which is
+why it is normally run remotely.
+
 1. Publish each MCP as its own public repository. ✅ *(done)*
 2. **Test and optimise every MCP and the software gradually** — plugin by plugin, on the real
    machine, revisiting behaviour, edge cases and UX as we go.
