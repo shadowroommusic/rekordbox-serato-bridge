@@ -3,14 +3,23 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shadow-rekordbox-serato-bridge"
-version = "0.1.0"
-description = "Bidirectional read-only Rekordbox and Serato conversion preview"
+name = "rekordbox-serato-bridge"
+version = "0.2.0"
+description = "Rekordbox / Serato 资料库双向转换预览（ShadowRoom Music）"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["rekordbox", "serato", "dj", "mcp", "shadowroom"]
 dependencies = ["pyrekordbox>=0.4.4"]
+
+[project.urls]
+Homepage = "https://shadowroom.cn"
+Tools = "https://shadowroom.cn/tools"
+Repository = "https://github.com/shadowroommusic"
 
 [project.scripts]
 shadow-rb-serato = "shadow_rb_serato.cli:main"
+shadow-rb-serato-mcp = "shadow_rb_serato.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

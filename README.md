@@ -1,6 +1,6 @@
-# Rekordbox to Serato Bridge
+# Rekordbox Serato Bridge
 
-This independent Shadow Producers plugin provides bidirectional Rekordbox and Serato library inspection and conversion previews. The first release is read-only: it never edits a vendor database or an audio file.
+This independent ShadowRoom Music plugin (a Shadow Producers tool) provides bidirectional Rekordbox and Serato library inspection and conversion previews. The first release is read-only: it never edits a vendor database or an audio file.
 
 It reads Rekordbox 6/7 through `pyrekordbox` and Serato's `master.sqlite` in read-only mode, normalizes tracks and Cue points, matches local assets, and reports which fields can be migrated in either direction. A future write release will use staging copies, explicit confirmation, backups, and a read-back verification pass.
 

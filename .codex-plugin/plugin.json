@@ -1,19 +1,39 @@
 {
   "name": "rekordbox-serato-bridge",
-  "version": "0.1.0",
-  "description": "Rekordbox Serato Bridge plugin",
+  "version": "0.2.0+codex.20260913133410",
+  "description": "Rekordbox \u4e0e Serato \u8d44\u6599\u5e93\u53cc\u5411\u8f6c\u6362\u9884\u89c8\uff08ShadowRoom Music\uff09",
   "author": {
-    "name": "Local developer"
+    "name": "ShadowRoom Music",
+    "email": "support@shadowroom.cn",
+    "url": "https://shadowroom.cn"
   },
-  "skills": "./skills/",
+  "homepage": "https://shadowroom.cn",
+  "repository": "https://github.com/shadowroommusic",
+  "license": "MIT",
+  "keywords": [
+    "rekordbox",
+    "serato",
+    "dj",
+    "library",
+    "mcp",
+    "shadowroom"
+  ],
   "interface": {
     "displayName": "Rekordbox Serato Bridge",
-    "shortDescription": "Use Rekordbox Serato Bridge in Codex.",
-    "longDescription": "Rekordbox Serato Bridge adds a local Codex plugin scaffold.",
-    "developerName": "Local developer",
-    "category": "Productivity",
-    "capabilities": [],
-    "defaultPrompt": "Help me use Rekordbox Serato Bridge."
+    "shortDescription": "Rekordbox \u4e0e Serato \u8d44\u6599\u5e93\u53cc\u5411\u8f6c\u6362\u9884\u89c8\u3002",
+    "longDescription": "\u53ea\u8bfb\u53cc\u5411\u6865\uff1a\u8bfb\u53d6 Rekordbox 6/7 \u4e0e Serato \u4e3b\u5e93\uff0c\u7edf\u4e00 Track / Cue \u6a21\u578b\uff0c\u6309\u8def\u5f84\u3001\u6587\u4ef6\u540d+\u5927\u5c0f\u3001\u5143\u6570\u636e\u4e09\u7ea7\u5339\u914d\uff0c\u8f93\u51fa\u53ef\u8fc1\u79fb\u5b57\u6bb5\u4e0e\u5dee\u5f02\u62a5\u544a\uff0c\u5e76\u5728\u5199\u5165\u524d\u4fdd\u6301\u96f6\u6539\u52a8\u3002",
+    "developerName": "ShadowRoom Music",
+    "category": "Music",
+    "capabilities": [
+      "rekordbox",
+      "serato",
+      "library-preview",
+      "cue-mapping"
+    ],
+    "websiteURL": "https://shadowroom.cn/tools",
+    "logo": "./assets/icon.png",
+    "brandColor": "#0B0B0F",
+    "defaultPrompt": "\u9884\u89c8\u6211\u7684 Rekordbox \u8d44\u6599\u5e93\u8f6c\u6362\u5230 Serato \u4f1a\u6709\u4ec0\u4e48\u7ed3\u679c\u3002"
   },
   "mcpServers": "./.mcp.json"
 }

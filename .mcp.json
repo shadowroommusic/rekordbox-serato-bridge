@@ -2,8 +2,10 @@
   "mcpServers": {
     "rekordbox-serato-bridge": {
       "command": "python3",
-      "args": ["-m", "shadow_rb_serato.mcp_server"],
-      "cwd": "${pluginRoot}"
+      "args": [
+        "mcp_server.py"
+      ],
+      "cwd": "."
     }
   }
 }
