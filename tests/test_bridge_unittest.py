@@ -10,6 +10,8 @@ from shadow_rb_serato import mcp_server
 from shadow_rb_serato.model import CuePoint, Track
 from shadow_rb_serato.preview import preview
 from shadow_rb_serato.readers import read_serato
+from shadow_rb_serato.rekordbox_export import SeratoSet, read_serato_sets, to_rekordbox_xml
+from shadow_rb_serato.serato_export import SetTrack, build_beatgrid, convert_set, cue_to_marker, markers_for
 from shadow_rb_serato.serato_markers import (
     MARKERS1_VERSION,
     MARKERS2_DESC,
@@ -254,6 +256,31 @@ class SeratoMarkerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 replace_geob_tags(path, {MARKERS2_DESC: build_markers2([])})
 
+    def test_existing_id3v23_tag_is_preserved_when_adding_markers(self) -> None:
+        def synchsafe(value: int) -> bytes:
+            return bytes(((value >> 21) & 0x7F, (value >> 14) & 0x7F, (value >> 7) & 0x7F, value & 0x7F))
+
+        def frame(frame_id: bytes, body: bytes) -> bytes:
+            return frame_id + struct.pack(">I", len(body)) + b"\x00\x00" + body
+
+        title = "Existing Title".encode("latin-1")
+        artwork = b"\x00" * 3000
+        body = frame(b"TIT2", b"\x00" + title) + frame(b"APIC", b"\x00image/jpeg\x00\x03cover\x00" + artwork)
+        tag = b"ID3\x03\x00\x00" + synchsafe(len(body)) + body
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "track.mp3"
+            path.write_bytes(tag + b"\xff\xfb\x90\x00" + b"\x00" * 256)
+            replace_geob_tags(path, {MARKERS2_DESC: build_markers2([SeratoMarker("cue", 0, 3333, None, "A", 0xCC0000)])})
+            markers, source = read_markers(path)
+            self.assertEqual(source, MARKERS2_DESC)
+            self.assertEqual([(m.position_ms, m.name) for m in markers], [(3333, "A")])
+            blob = path.read_bytes()
+            self.assertEqual(blob[:5], b"ID3\x03\x00")
+            self.assertIn(b"TIT2", blob)
+            self.assertIn(title, blob)
+            self.assertIn(b"APIC", blob)
+            self.assertTrue(blob.endswith(b"\xff\xfb\x90\x00" + b"\x00" * 256))
+
 
 class StagingTests(unittest.TestCase):
     def test_stage_cues_writes_only_the_copy_and_verifies(self) -> None:
@@ -362,6 +389,158 @@ class PreviewCueTests(unittest.TestCase):
         self.assertTrue(any("while the source has" in warning for warning in match["warnings"]))
         self.assertEqual(result["target"]["local_assets_with_cues"], 1)
         self.assertEqual(result["target"]["cue_count"], 2)
+
+
+class SetExportTests(unittest.TestCase):
+    def test_cue_mapping_covers_memory_hot_and_loop(self) -> None:
+        markers = markers_for(
+            SetTrack(
+                id="rb:1",
+                title="Track",
+                artist="Artist",
+                path="/tmp/track.mp3",
+                bpm=128.0,
+                cues=(
+                    CuePoint(0, 1000, None, "memory", 0xCC0000, False, None),
+                    CuePoint(1, 2000, None, "A", 0xCC8800, False, 0),
+                    CuePoint(1, 3000, 3400, "loop", 0x00CC00, True, 400),
+                ),
+            )
+        )
+        self.assertEqual([marker.kind for marker in markers], ["cue", "cue", "loop"])
+        self.assertEqual([marker.position_ms for marker in markers], [1000, 2000, 3000])
+        self.assertEqual(markers[2].end_ms, 3400)
+        self.assertEqual(cue_to_marker(0, CuePoint(1, 500, None, None, None, False, None)).kind, "cue")
+
+    def test_beatgrid_layout(self) -> None:
+        blob = build_beatgrid(128.0, 1500)
+        self.assertEqual(blob[:2], b"\x01\x00")
+        self.assertEqual(struct.unpack(">I", blob[2:6])[0], 1)
+        self.assertAlmostEqual(struct.unpack(">f", blob[6:10])[0], 1.5, places=4)
+        self.assertAlmostEqual(struct.unpack(">f", blob[10:14])[0], 128.0, places=4)
+        self.assertEqual(blob[14:], b"\x00")
+        with self.assertRaises(ValueError):
+            build_beatgrid(0)
+
+    def test_convert_set_writes_tags_crate_and_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = write_fake_mp3(root / "track.mp3")
+            before = source.read_bytes()
+            track = SetTrack(
+                id="rb:1",
+                title="Track",
+                artist="Artist",
+                path=str(source),
+                bpm=130.0,
+                cues=(CuePoint(1, 27, None, "A", 0xCC0000, False, 0), CuePoint(1, 20335, None, "B", 0xCC8800, False, 0)),
+            )
+            out = root / "usb"
+            report = convert_set([track], out, name="测试")
+
+            self.assertEqual(report["converted"], 1)
+            self.assertEqual(report["missing"], 0)
+            staged = Path(report["tracks"][0]["staged"])
+            self.assertTrue(staged.is_file())
+            self.assertEqual(staged.parent, out / "ShadowRoom" / "测试")
+            markers, marker_source = read_markers(staged)
+            self.assertEqual(marker_source, MARKERS2_DESC)
+            self.assertEqual([(m.position_ms, m.name) for m in markers], [(27, "A"), (20335, "B")])
+            self.assertEqual(source.read_bytes(), before)
+            self.assertTrue(report["tracks"][0]["source_unchanged"])
+
+            crate = Path(report["crate"])
+            self.assertTrue(crate.is_file())
+            self.assertEqual(crate.parent, out / "_Serato_" / "Subcrates")
+            blob = crate.read_bytes()
+            self.assertEqual(blob[:4], b"vrsn")
+            self.assertIn(b"ptrk", blob)
+            self.assertIn(str(Path("ShadowRoom") / "测试" / "track.mp3").encode("utf-16-be"), blob)
+
+            manifest = Path(report["manifest"])
+            self.assertTrue(manifest.is_file())
+            self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["set"], "测试")
+
+    def test_convert_set_reports_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = convert_set(
+                [SetTrack(id="rb:1", title="Gone", artist="", path="/tmp/definitely-missing.mp3")],
+                Path(tmp) / "usb",
+                name="测试",
+            )
+            self.assertEqual(report["converted"], 0)
+            self.assertEqual(report["missing"], 1)
+            self.assertIsNone(report["crate"])
+
+
+class RekordboxExportTests(unittest.TestCase):
+    def build_serato_database(self, root: Path, mp3: Path) -> Path:
+        database = root / "master.sqlite"
+        connection = sqlite3.connect(str(database))
+        connection.execute(
+            "CREATE TABLE asset (id INTEGER PRIMARY KEY, file_name TEXT, portable_id TEXT, name TEXT, artist TEXT, bpm REAL, key TEXT, length_ms INTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE container (id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT, type INTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE container_asset (id INTEGER PRIMARY KEY, asset_id INTEGER, location_container_id INTEGER, list_order INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO asset VALUES (1, ?, ?, 'CONTEXT', '33 Below', 140.0, 'Cm', 180000)",
+            (mp3.name, str(mp3).lstrip("/")),
+        )
+        connection.execute("INSERT INTO container VALUES (5, 0, 'Serato Library root', 0)")
+        connection.execute("INSERT INTO container VALUES (77, 5, '测试', 1)")
+        connection.execute("INSERT INTO container_asset VALUES (900, 1, 77, 1)")
+        connection.commit()
+        connection.close()
+        return database
+
+    def test_read_serato_sets_includes_crate_and_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mp3 = write_fake_mp3(root / "context.mp3")
+            replace_geob_tags(
+                mp3,
+                {MARKERS2_DESC: build_markers2([SeratoMarker("cue", 0, 79, None, "A", 0xCC0000), SeratoMarker("cue", 1, 27079, None, "B", 0xCC8800)])},
+            )
+            database = self.build_serato_database(root, mp3)
+            sets = read_serato_sets(database)
+            crate = next(item for item in sets if item.name == "测试")
+            self.assertEqual(len(crate.tracks), 1)
+            track = crate.tracks[0]
+            self.assertEqual(track.title, "CONTEXT")
+            self.assertEqual([(cue.in_ms, cue.comment) for cue in track.cues], [(79, "A"), (27079, "B")])
+            self.assertEqual(track.bpm, 140.0)
+            self.assertTrue(any(item.name == "Serato 本地曲目" for item in sets))
+
+    def test_rekordbox_xml_contains_cues_loops_and_playlists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mp3 = write_fake_mp3(root / "track.mp3")
+            track = SetTrack(
+                id="serato:1",
+                title="Track",
+                artist="Artist",
+                path=str(mp3),
+                bpm=128.0,
+                key="8A",
+                duration_ms=240000,
+                cues=(
+                    CuePoint(1, 27, None, "A", 0xCC0000, False, 0),
+                    CuePoint(1, 3000, 3400, "loop", 0x00CC00, True, 400),
+                ),
+            )
+            xml_path = to_rekordbox_xml([SeratoSet("测试", [track])], root / "rekordbox.xml")
+            text = xml_path.read_text(encoding="utf-8")
+            self.assertIn('<DJ_PLAYLISTS Version="1.0.0">', text)
+            self.assertIn('Name="测试"', text)
+            self.assertIn('Location="file://localhost', text)
+            self.assertIn('Type="0" Start="0.027" End="-1" Num="0"', text)
+            self.assertIn('Type="4" Start="3.000" End="3.400"', text)
+            self.assertIn('<TRACK Key="1" />', text)
+            self.assertIn('Entries="1"', text)
 
 
 if __name__ == "__main__":

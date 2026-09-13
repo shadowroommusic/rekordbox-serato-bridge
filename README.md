@@ -13,7 +13,59 @@ This ShadowRoom Music plugin reads Rekordbox 6/7 (through `pyrekordbox`) and Ser
 
 Serato 本地文件的真实路径来自 `asset.portable_id`（相对卷根目录），插件的 `read_serato` 会据此定位文件并读取标记；读不到时会在报告里明确写出原因（文件不在、没有标签、容器不支持）。
 
-## 三种用法
+## 两个转换方向
+
+| 方向 | 命令 | 输入 |
+| --- | --- | --- |
+| **Rekordbox → Serato** | `convert-set --to serato` | 本地库的播放列表，或 rekordbox U 盘设备库（读 USBANLZ 里的 cue/loop） |
+| **Serato → Rekordbox** | `convert-set --to rekordbox` | Serato 的 crate / 本地曲目（cue 从音频文件的 Markers2 读取），写进本地 Rekordbox 库或导出 XML |
+
+两个方向都是**只写副本**：原始音频、Rekordbox 库、Serato 库都不会被改动（反向写 Rekordbox 库时需要你显式 `--apply`，届时自动备份 `master.db`）。
+
+### Rekordbox → Serato（场地只有 Serato）
+
+```sh
+# 用 rekordbox U 盘里的设备库（推荐：设备上的 cue/loop 是权威数据）
+.venv/bin/shadow-rb-serato convert-set \
+  --to serato --name "测试" --out ~/Music/ShadowRoom-USB \
+  --device-root /Volumes/f379pro \
+  --track "/Volumes/f379pro/1/a.mp3" --track "/Volumes/f379pro/1/b.mp3"
+
+# 或者用本地库里的播放列表（set）
+.venv/bin/shadow-rb-serato list-sets --rekordbox-database ... --rekordbox-dir ...
+.venv/bin/shadow-rb-serato convert-set --to serato --name "我的set" --out ~/Music/ShadowRoom-USB \
+  --rekordbox-database ... --rekordbox-dir ... --playlist "我的set"
+```
+
+输出结构（**整个文件夹拷到 U 盘根目录**即可）：
+
+```text
+<out>/ShadowRoom/<set 名>/a.mp3        # 带 Serato Markers2(cue/loop) + BeatGrid 的副本
+<out>/ShadowRoom/<set 名>/manifest.json
+<out>/_Serato_/Subcrates/<set 名>.crate # Serato 播放列表
+```
+
+到现场：U 盘插上 Serato，crate 里的曲目带着 A/B（以及 loop）hot cue；若 Serato 没有自动显示该 crate，把音乐拖进库里也会带上同样的 cue。
+
+### Serato → Rekordbox（场地只有 rekordbox）
+
+```sh
+# 先看会做什么（不写库）
+.venv/bin/shadow-rb-serato convert-set --to rekordbox --name "测试" \
+  --serato-database "$HOME/Library/Application Support/Serato/Library/master.sqlite" \
+  --rekordbox-database "$HOME/Library/Pioneer/rekordbox/master.db" \
+  --rekordbox-dir "$HOME/Library/Pioneer/rekordbox"
+
+# 确认无误后写入（Rekordbox 必须关闭；自动备份 master.db + 回读校验）
+.venv/bin/shadow-rb-serato convert-set --to rekordbox --name "测试" --apply ...
+
+# 不想动数据库？导出 rekordbox 兼容 XML，在 Rekordbox 里导入
+.venv/bin/shadow-rb-serato convert-set --to rekordbox --name "测试" --xml ~/Desktop/测试.xml ...
+```
+
+写库会同时更新 `djmdCue` 明细行和 `contentCue` 的 JSON 缓存（rekordbox 两者都读），并创建同名播放列表；完成后重新打开 Rekordbox 就能看到。
+
+## 预览与单曲 staging
 
 ```sh
 python3 -m venv .venv
@@ -56,18 +108,21 @@ python3 -m venv .venv
 
 ## MCP
 
-`.mcp.json` 暴露三个工具：
+`.mcp.json` 暴露六个工具：
 
 | 工具 | 作用 |
 | --- | --- |
 | `preview_rekordbox_to_serato` | Rekordbox → Serato 只读预览 |
 | `preview_serato_to_rekordbox` | Serato → Rekordbox 只读预览 |
 | `stage_serato_cues` | 把 cue 写进 staging 副本并回读校验（`track`、`cues`、`staging_dir`） |
+| `list_sets` | 列出本地 Rekordbox 库里的播放列表（set） |
+| `convert_set` | Rekordbox set（本地库或 U 盘设备库）→ Serato 可用目录（副本 + cue/loop + gig 用 crate） |
+| `convert_set_to_rekordbox` | Serato crate/本地曲目 → Rekordbox（dry-run / `apply` 写库 / XML 导出） |
 
 ## 已验证 / 未做
 
-- 已验证：真实 Rekordbox 库（115 曲 / 80 首带 cue）与真实 Serato 库（8426 资产）双向预览；真实 rekordbox cue 写进 AIFF staging 副本并回读一致；Markers2 与我们写入的数据用独立实现（`serato-tools`）交叉校验通过。
-- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid 迁移；直接写入 Serato/Rekordbox 正式库（需要人工确认流程与备份）。
+- 已验证：真实 Rekordbox 库（115 曲 / 80 首带 cue）与真实 Serato 库双向预览；设备 ANLZ 里的 cue/loop 读出并转成 Serato Markers2 + BeatGrid；Markers2 用独立实现（`serato-tools`）交叉校验通过；Serato 标记 → Rekordbox 库（djmdCue + contentCue 缓存 + 播放列表）在库副本上写入并回读一致。
+- 未做：FLAC/OGG 等容器的标记读写；Serato BeatGrid → Rekordbox 网格（目前只带 BPM/常量网格）；cue 颜色映射（Rekordbox 颜色表与 Serato 调色板不同，目前 Color 留空）。
 
 ## License
 

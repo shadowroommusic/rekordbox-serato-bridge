@@ -371,10 +371,11 @@ def _int_to_color(value: int | None) -> bytes:
     return bytes(((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF))
 
 
-def build_geob_frame(desc: str, data: bytes) -> bytes:
-    """ID3v2.4 GEOB 帧体：encoding + mime + filename + description + data。"""
+def build_geob_frame(desc: str, data: bytes, major: int = 4) -> bytes:
+    """GEOB 帧：encoding + mime + filename + description + data（按标签版本编码长度）。"""
     body = b"\x00" + b"application/octet-stream\x00" + b"\x00" + desc.encode("latin-1") + b"\x00" + data
-    return b"GEOB" + _synchsafe(len(body)) + b"\x00\x00" + body
+    size = _synchsafe(len(body)) if major >= 4 else struct.pack(">I", len(body))
+    return b"GEOB" + size + b"\x00\x00" + body
 
 
 def _synchsafe(value: int) -> bytes:
@@ -400,12 +401,16 @@ def replace_geob_tags(path: str | Path, frames: "dict[str, bytes]", *, tag_paddi
 
 def _build_tag(target: Path, frames: "dict[str, bytes]", tag_padding: int) -> bytes:
     existing = extract_id3_tag(target)
-    kept: "list[bytes]" = []
+    major = existing[3] if existing else 4
+    kept = bytearray()
     if existing:
-        kept = [frame for desc, frame in _iter_raw_frames(existing) if desc not in frames]
-    body = b"".join(kept) + b"".join(build_geob_frame(desc, payload) for desc, payload in frames.items())
+        for desc, frame in _iter_raw_frames(existing):
+            if desc and desc in frames:
+                continue  # 替换同名 GEOB，其余帧按原样保留
+            kept += frame
+    body = bytes(kept) + b"".join(build_geob_frame(desc, payload, major) for desc, payload in frames.items())
     body += b"\x00" * tag_padding
-    return b"ID3\x04\x00\x00" + _synchsafe(len(body)) + body
+    return b"ID3" + bytes([major, 0, 0]) + _synchsafe(len(body)) + body
 
 
 def _write_mp3_tag(target: Path, frames: "dict[str, bytes]", tag_padding: int) -> None:
