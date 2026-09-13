@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .model import CuePoint, Track
+from . import serato_markers
 
 
 def _text(value: Any) -> str:
@@ -68,8 +69,24 @@ def read_rekordbox(database: str | Path, db_dir: str | Path) -> list[Track]:
         db.close()
 
 
-def read_serato(database: str | Path) -> list[Track]:
-    """Read Serato's master.sqlite using SQLite's read-only URI mode."""
+def serato_local_path(portable_id: str, file_name: str) -> str:
+    """Serato 把本地文件的相对路径存在 portable_id 里（相对卷根目录）。"""
+    portable = (portable_id or "").strip()
+    if portable and not portable.startswith("streaming://"):
+        return portable if portable.startswith("/") else "/" + portable
+    return file_name
+
+
+def read_serato(
+    database: str | Path,
+    read_markers: bool = True,
+    warnings: "list[str] | None" = None,
+) -> list[Track]:
+    """Read Serato's master.sqlite using SQLite's read-only URI mode.
+
+    Serato DJ Pro 4.x keeps cue points in the audio files, not in master.sqlite,
+    so local assets also get their Serato Markers2 / Markers_ tags read here.
+    """
     path = Path(database)
     if not path.exists():
         raise FileNotFoundError(path)
@@ -77,24 +94,42 @@ def read_serato(database: str | Path) -> list[Track]:
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
-            "SELECT id, file_name, file_size, name, artist, bpm, key, rating, color, length_ms FROM asset ORDER BY id"
+            "SELECT id, file_name, portable_id, file_size, name, artist, bpm, key, rating, color, length_ms "
+            "FROM asset ORDER BY id"
         ).fetchall()
-        return [
-            Track(
-                source_id=f"serato:{row['id']}",
-                title=_text(row["name"]),
-                artist=_text(row["artist"]),
-                path=_text(row["file_name"]),
-                file_name=Path(_text(row["file_name"]).replace("\\", "/")).name,
-                size=int(row["file_size"]) if row["file_size"] is not None else None,
-                length_ms=int(row["length_ms"]) if row["length_ms"] is not None else None,
-                bpm=float(row["bpm"]) if row["bpm"] else None,
-                key=_text(row["key"]) or None,
-                rating=row["rating"],
-                color=row["color"],
-                source_kind="streaming" if _text(row["file_name"]).startswith("streaming://") else "local",
+        tracks: "list[Track]" = []
+        for row in rows:
+            file_name = _text(row["file_name"])
+            streaming = file_name.startswith("streaming://")
+            local_path = file_name if streaming else serato_local_path(_text(row["portable_id"]), file_name)
+            cues: "tuple[CuePoint, ...]" = ()
+            if read_markers and not streaming:
+                if Path(local_path).is_file():
+                    try:
+                        markers, _source = serato_markers.read_markers(local_path)
+                        cues = serato_markers.to_cue_points(markers)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        if warnings is not None:
+                            warnings.append(f"could not read Serato markers from {local_path}: {exc}")
+                elif warnings is not None:
+                    warnings.append(f"local asset not found on disk, markers not read: {local_path}")
+            tracks.append(
+                Track(
+                    source_id=f"serato:{row['id']}",
+                    title=_text(row["name"]),
+                    artist=_text(row["artist"]),
+                    path=local_path,
+                    file_name=Path(local_path.replace("\\", "/")).name,
+                    size=int(row["file_size"]) if row["file_size"] is not None else None,
+                    length_ms=int(row["length_ms"]) if row["length_ms"] is not None else None,
+                    bpm=float(row["bpm"]) if row["bpm"] else None,
+                    key=_text(row["key"]) or None,
+                    rating=row["rating"],
+                    color=row["color"],
+                    cues=cues,
+                    source_kind="streaming" if streaming else "local",
+                )
             )
-            for row in rows
-        ]
+        return tracks
     finally:
         con.close()
