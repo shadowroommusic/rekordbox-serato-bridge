@@ -37,6 +37,16 @@ it), and together they are the toolkit that `producer-tools` bundles into one ap
 
 ## Decisions
 
+- **2026-09-14 — harness evaluation (Codex vs DeepSeek).** The Codex harness (`openai/codex`,
+  Apache-2.0) **can** be used inside Shadow Producers: bundle the `codex` binary and drive it in
+  `app-server` mode through its protocol/control socket (`codex-rs/app-server*` crates,
+  `codex-app-server-protocol` is published on crates.io; the same pattern the Codex desktop app
+  uses). Linking the Rust crates directly would require vendoring the workspace, because
+  `codex-core` / `codex-app-server` are **not** published. Codex natively speaks MCP, so the four
+  ShadowRoom plugins drop straight in. `deepseek-ai/deepseek-harness` (MIT, everything-is-a-plugin)
+  works as a reference or alternative, but is a developer preview with breaking changes.
+  Reference checkouts live in `~/Documents/ShadowRoom/_reference/{codex,deepseek-harness}`.
+
 - **2026-09-14 — generator backend (option B).** `shadow-music-generator` stays backend-less for
   now: it is used as a job record + request manager (prompts, lyrics, parameters, license notes,
   dry-run by default). The real provider wiring happens later inside `producer-tools`. The YuE2
