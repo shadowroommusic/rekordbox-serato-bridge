@@ -16,7 +16,7 @@ it), and together they are the toolkit that `producer-tools` bundles into one ap
 | `audio-analysis-dedupe` | Audio analysis + duplicate detection | published; not yet user-tested |
 | `set-planner` | Set timing + next-track suggestions | published; not yet user-tested |
 | `shadow-music-generator` | Queue for local AI music generation pipelines | published; not yet user-tested |
-| `producer-tools` (planned) | the app that collects these tools into one product | not started |
+| `producer-tools` | the app that collects these tools into one product | scaffolding (UI reference written) |
 | `shadow-producers` (planned) | the AI agent | not started |
 
 ## House rules
@@ -36,6 +36,12 @@ it), and together they are the toolkit that `producer-tools` bundles into one ap
   conversion feature done.
 
 ## Decisions
+
+- **2026-09-14 — UI/frontend reference.** `producer-tools` follows the UI/frontend patterns of
+  DeepSeek Harness (pnpm workspaces, React + Vite + CSS Modules, token-based theming, plugin-style
+  `ui-*` packages with slots and docks, per-package i18n) with our own `--sr-*` tokens and brand
+  colours. The agent core is the Codex harness (bundled `codex` binary + `app-server` protocol).
+  Details: `producer-tools/docs/ui-reference.md`.
 
 - **2026-09-14 — harness evaluation (Codex vs DeepSeek).** The Codex harness (`openai/codex`,
   Apache-2.0) **can** be used inside Shadow Producers: bundle the `codex` binary and drive it in
