@@ -857,5 +857,45 @@ class SeratoWalLibraryTests(unittest.TestCase):
                 writer.close()
 
 
+class PathArgumentTests(unittest.TestCase):
+    """MCP clients send plain strings, so `~` has to be expanded server-side."""
+
+    def test_expands_tilde_in_path_arguments(self):
+        home = str(Path.home())
+        arguments = mcp_server.expand_path_arguments(
+            {
+                "rekordbox_database": "~/Library/Pioneer/rekordbox/master.db",
+                "serato_database": "~/Library/Application Support/Serato/Library/master.sqlite",
+                "out_dir": "/Volumes/USB/set",
+                "tracks": ["~/Music/a.aiff", "/Volumes/USB/b.aiff"],
+                "playlist": "~/not-a-path",
+            }
+        )
+        self.assertEqual(arguments["rekordbox_database"], f"{home}/Library/Pioneer/rekordbox/master.db")
+        self.assertEqual(
+            arguments["serato_database"],
+            f"{home}/Library/Application Support/Serato/Library/master.sqlite",
+        )
+        self.assertEqual(arguments["out_dir"], "/Volumes/USB/set")
+        self.assertEqual(arguments["tracks"], [f"{home}/Music/a.aiff", "/Volumes/USB/b.aiff"])
+        self.assertEqual(arguments["playlist"], "~/not-a-path")
+
+    def test_list_sets_accepts_a_tilde_database(self):
+        response = mcp_server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "list_sets",
+                    "arguments": {"rekordbox_database": "~/does/not/exist.db", "rekordbox_dir": "~"},
+                },
+            }
+        )
+        text = response["result"]["content"][0]["text"]
+        self.assertTrue(response["result"].get("isError"))
+        self.assertNotIn("~/does/not/exist.db", text)  # the diagnostic shows the expanded path
+
+
 if __name__ == "__main__":
     unittest.main()

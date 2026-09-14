@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 from .model import to_json
 from .preview import preview
@@ -19,6 +20,35 @@ TOOLS = {
     "convert_set": "Convert a Rekordbox set into a Serato-ready output folder: copies with Serato Markers2 cues/loops, BeatGrid tags and a .crate playlist.",
     "convert_set_to_rekordbox": "Convert a Serato set back into Rekordbox: dry-run the database write, export a Rekordbox XML, or apply with automatic backup.",
 }
+
+#: Tool arguments that carry a filesystem path. MCP clients hand us plain strings — no shell is
+#: involved — so `~` has to be expanded here (a UI cannot know the user's home directory either).
+PATH_ARGUMENTS = (
+    "rekordbox_database",
+    "rekordbox_dir",
+    "serato_database",
+    "out_dir",
+    "crate_dir",
+    "device_root",
+    "xml_path",
+    "staging_dir",
+    "track",
+)
+
+
+def expand_path_arguments(arguments: dict) -> dict:
+    """Expand a leading `~` in every path argument (returns the same dict, for call-site brevity)."""
+    for key in PATH_ARGUMENTS:
+        value = arguments.get(key)
+        if isinstance(value, str) and value.startswith("~"):
+            arguments[key] = str(Path(value).expanduser())
+    tracks = arguments.get("tracks")
+    if isinstance(tracks, list):
+        arguments["tracks"] = [
+            str(Path(item).expanduser()) if isinstance(item, str) and item.startswith("~") else item
+            for item in tracks
+        ]
+    return arguments
 
 SERVER_NAME = "rekordbox-serato-bridge"
 SERVER_VERSION = "0.2.0"
@@ -165,7 +195,7 @@ def handle(message: dict) -> dict | None:
     if method != "tools/call":
         return response(request_id, error=f"Unsupported method: {method}")
     name = params.get("name")
-    arguments = params.get("arguments") or {}
+    arguments = expand_path_arguments(params.get("arguments") or {})
     try:
         if name == "list_sets":
             sets = read_rekordbox_sets(arguments["rekordbox_database"], arguments["rekordbox_dir"])
