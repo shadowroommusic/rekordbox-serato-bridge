@@ -17,6 +17,7 @@ from shadow_rb_serato.colors import (
 from shadow_rb_serato.model import CuePoint, Track
 from shadow_rb_serato.preview import preview
 from shadow_rb_serato.readers import read_serato
+from shadow_rb_serato.readers import open_serato_library
 from shadow_rb_serato.rekordbox_export import (
     FIRST_PAD_KIND,
     LAST_PAD_KIND,
@@ -772,6 +773,88 @@ class RekordboxExportTests(unittest.TestCase):
             self.assertIn('Type="4" Start="3.000" End="3.400"', text)
             self.assertIn('<TRACK Key="1" />', text)
             self.assertIn('Entries="1"', text)
+
+
+class SeratoWalLibraryTests(unittest.TestCase):
+    """Serato DJ Pro keeps master.sqlite in WAL mode (verified against Serato 4.x on macOS).
+
+    A WAL database cannot be opened with `?mode=ro` while its sidecars are missing, which is exactly
+    how a library looks when Serato is closed: SQLite would have to create the -shm file. The reader
+    therefore falls back to a private copy of the database plus any -wal/-shm siblings.
+    """
+
+    def _wal_database(self, path: Path):
+        con = sqlite3.connect(str(path))
+        con.execute("pragma journal_mode=wal")
+        con.execute(
+            "create table asset (id integer primary key, file_name text, portable_id text, "
+            "file_size integer, name text, artist text, bpm real, key text, rating integer, "
+            "color text, length_ms integer)"
+        )
+        con.execute(
+            "insert into asset (file_name, portable_id, file_size, name, artist, length_ms) "
+            "values ('/x/A.aiff', '', 11, 'A', 'Artist', 1000)"
+        )
+        con.commit()
+        return con
+
+    def test_reads_a_wal_library_copied_without_sidecars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live.sqlite"
+            writer = self._wal_database(live)
+            try:
+                copy_dir = root / "copied"
+                copy_dir.mkdir()
+                copied = copy_dir / "master.sqlite"
+                shutil.copy2(live, copied)  # the -wal is intentionally left behind
+                with self.assertRaises(sqlite3.OperationalError):
+                    sqlite3.connect(f"file:{copied}?mode=ro", uri=True).execute("SELECT 1").fetchone()
+                # The fallback opens the copy, but a library copied without its -wal has no asset
+                # table left; that has to read as a clear diagnosis, not as a raw sqlite error.
+                with self.assertRaises(RuntimeError) as caught:
+                    read_serato(copied)
+                self.assertIn("-wal", str(caught.exception))
+            finally:
+                writer.close()
+
+    def test_reads_committed_rows_when_sidecars_are_copied_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live.sqlite"
+            writer = self._wal_database(live)
+            try:
+                copy_dir = root / "copied"
+                copy_dir.mkdir()
+                copied = copy_dir / "master.sqlite"
+                shutil.copy2(live, copied)
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(f"{live}{suffix}")
+                    if sidecar.is_file():
+                        shutil.copy2(sidecar, Path(f"{copied}{suffix}"))
+                tracks = read_serato(copied)
+                self.assertEqual([track.title for track in tracks], ["A"])
+            finally:
+                writer.close()
+
+    def test_never_writes_sidecars_next_to_the_vendor_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live.sqlite"
+            writer = self._wal_database(live)
+            try:
+                copy_dir = root / "vendor"
+                copy_dir.mkdir()
+                vendor = copy_dir / "master.sqlite"
+                shutil.copy2(live, vendor)
+                con, cleanup = open_serato_library(vendor)
+                try:
+                    con.execute("SELECT 1").fetchone()
+                finally:
+                    cleanup()
+                self.assertEqual(sorted(p.name for p in copy_dir.iterdir()), ["master.sqlite"])
+            finally:
+                writer.close()
 
 
 if __name__ == "__main__":

@@ -15,6 +15,21 @@ Serato DJ Pro 4.0.0); the user-facing docs live in [../README.md](../README.md).
 Serato's `asset.bpm` column is frequently NULL; BPM falls back to the file's `Serato BeatGrid`
 terminal marker (`parse_beatgrid_bpm`).
 
+## Serato's `master.sqlite` is a WAL database (measured 2026-09-14, Serato DJ Pro 4.0, macOS)
+
+| Fact | Evidence |
+| --- | --- |
+| The library runs in WAL mode | `PRAGMA journal_mode` on a copy answers `wal` |
+| `?mode=ro` cannot open it while the `-wal`/`-shm` sidecars are missing | `sqlite3.OperationalError: unable to open database file`, reproduced both on a copy and on the live file with Serato closed (SQLite would have to create the `-shm` itself) |
+| `immutable=1` opens it but silently serves the last checkpoint | on the same copy it reports `no such table: asset` for a table created after that checkpoint — stale, so it must not be the fallback |
+| `mode=rw` works, but SQLite then writes `-shm`/`-wal` into Serato's Library folder | observed; not acceptable — the vendor folder stays read-only for this plugin |
+| Copying the database **together with** its sidecars into a temp dir reads the fresh, committed rows | 2 rows written before the copy are visible from the copy |
+
+`readers.open_serato_library()` therefore tries `mode=ro` first and falls back to a private copy of
+the database plus any `-wal`/`-shm` siblings in a temp directory, opened normally and deleted
+afterwards. A library that was copied without those sidecars has no `asset` table left; the reader
+turns that into an explicit message instead of a raw sqlite error.
+
 ## Rekordbox cue model (measured 2026-09-14, 16 control cues + XML export cross-check)
 
 | Field | Meaning |

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,48 @@ def _source_kind(path: str) -> str:
     if path.startswith("/Volumes/") or path.startswith("\\\\"):
         return "removable-or-external"
     return "local"
+
+
+def open_serato_library(path: "str | Path") -> "tuple[sqlite3.Connection, Any]":
+    """打开 Serato 的 master.sqlite，且不改动 Serato 自己的目录。
+
+    Serato DJ Pro 把库放在 WAL 模式里。这种库不能简单用 ``?mode=ro`` 打开：SQLite 需要创建
+    ``-shm`` 边车文件，只读连接做不到，于是抛 “unable to open database file”（真机验证：Serato
+    4.x 的 master.sqlite 在没有 -wal/-shm 时会稳定复现）。``immutable=1`` 能打开，但会**静默读到
+    上一次 checkpoint 的旧数据**，所以不能拿它兜底。
+
+    因此：先试严格只读；失败就把库连同 ``-wal``/``-shm`` 一起复制到临时目录，打开副本读取，用完
+    删掉。vendor 目录始终只有读操作。
+
+    Returns:
+        (connection, cleanup)：读完必须调用 cleanup()。
+    """
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    try:
+        con = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        con.execute("SELECT 1").fetchone()  # connect() 是懒的：这里才真正打开
+        return con, con.close
+    except sqlite3.OperationalError:
+        pass
+
+    workdir = Path(tempfile.mkdtemp(prefix="shadow-serato-"))
+    target = workdir / source.name
+    shutil.copy2(source, target)
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{source}{suffix}")
+        if sidecar.is_file():
+            shutil.copy2(sidecar, Path(f"{target}{suffix}"))
+    con = sqlite3.connect(str(target))
+    con.row_factory = sqlite3.Row
+
+    def cleanup() -> None:
+        con.close()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    return con, cleanup
 
 
 def beat_anchor_from_analysis(db_dir: str | Path, analysis_path: str) -> int | None:
@@ -126,16 +170,21 @@ def read_serato(
     Serato DJ Pro 4.x keeps cue points in the audio files, not in master.sqlite,
     so local assets also get their Serato Markers2 / Markers_ tags read here.
     """
-    path = Path(database)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
+    con, cleanup = open_serato_library(database)
     try:
-        rows = con.execute(
-            "SELECT id, file_name, portable_id, file_size, name, artist, bpm, key, rating, color, length_ms "
-            "FROM asset ORDER BY id"
-        ).fetchall()
+        try:
+            rows = con.execute(
+                "SELECT id, file_name, portable_id, file_size, name, artist, bpm, key, rating, color, length_ms "
+                "FROM asset ORDER BY id"
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc):
+                raise RuntimeError(
+                    "Serato 的 master.sqlite 里读不到 asset 表：这份库看起来只复制了主文件，"
+                    "-wal/-shm 边车里还没合并的数据不在。请退出 Serato 后重新复制，或直接把 "
+                    "serato_database 指向 Serato 自己的库目录。"
+                ) from exc
+            raise
         tracks: "list[Track]" = []
         for row in rows:
             file_name = _text(row["file_name"])
@@ -171,4 +220,4 @@ def read_serato(
             )
         return tracks
     finally:
-        con.close()
+        cleanup()
