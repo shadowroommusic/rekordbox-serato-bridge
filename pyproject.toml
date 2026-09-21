@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Rekordbox / Serato 资料库双向转换预览（ShadowRoom Music）"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0" }
 keywords = ["rekordbox", "serato", "dj", "mcp", "shadowroom"]
 dependencies = ["pyrekordbox>=0.4.4"]
 
