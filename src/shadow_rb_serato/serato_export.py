@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import struct
 
@@ -86,7 +86,9 @@ def _write_crate(crate_path: Path, tracks_paths: "list[str]") -> Path:
     track_root = crate_dir.parent.parent  # .../
 
     def relative(path: str) -> str:
-        resolved = Path(path).expanduser().resolve()
+        # Windows 上的路径可能以反斜杠进来：PureWindowsPath 先归一，再统一成 Serato 期望的正斜杠。
+        normalised = str(PureWindowsPath(path)) if "\\" in path else path
+        resolved = Path(normalised).expanduser().resolve()
         try:
             return str(resolved.relative_to(track_root.resolve())).replace("\\", "/")
         except ValueError:

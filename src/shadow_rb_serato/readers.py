@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import shutil
 import tempfile
+import os
 from pathlib import Path
 from typing import Any
 
@@ -153,11 +154,19 @@ def read_rekordbox(database: str | Path, db_dir: str | Path) -> list[Track]:
 
 
 def serato_local_path(portable_id: str, file_name: str) -> str:
-    """Serato 把本地文件的相对路径存在 portable_id 里（相对卷根目录）。"""
-    portable = (portable_id or "").strip()
-    if portable and not portable.startswith("streaming://"):
-        return portable if portable.startswith("/") else "/" + portable
-    return file_name
+    """Serato 把本地文件的相对路径存在 portable_id 里（相对卷根目录）。
+
+    平台门槛：POSIX 卷相对路径要补前导 `/`；Windows 上 portable 可能是
+    `C:/Music/x.wav`（盘符绝对）或 `Music\\x.wav`（卷相对，分隔符是反斜杠）——
+    只有「既无前导 / 又无盘符」才补根，且补的是平台正确的根。
+    """
+    portable = (portable_id or "").strip().replace("\\", "/")
+    if not portable or portable.startswith("streaming://"):
+        return file_name
+    has_drive = len(portable) >= 2 and portable[1] == ":" and portable[0].isalpha()
+    if portable.startswith("/") or has_drive:
+        return portable
+    return "/" + portable if os.name != "nt" else portable
 
 
 def read_serato(

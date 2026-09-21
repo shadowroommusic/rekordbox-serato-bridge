@@ -41,6 +41,10 @@ def expand_path_arguments(arguments: dict) -> dict:
     for key in PATH_ARGUMENTS:
         value = arguments.get(key)
         if isinstance(value, str) and value.startswith("~"):
+            # Windows 上 "~" 与 "~user" 都要展开；Path.expanduser 已跨平台，这里只补日志可读性。
+            expanded = Path(value).expanduser()
+            arguments[key] = str(expanded)
+        elif isinstance(value, str) and value.startswith("~/"):
             arguments[key] = str(Path(value).expanduser())
     tracks = arguments.get("tracks")
     if isinstance(tracks, list):
