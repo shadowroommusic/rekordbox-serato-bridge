@@ -7,6 +7,8 @@ An MCP server that moves DJ library data — cues, loops, cue colors and playlis
 
 Works with any MCP-compatible agent or client.
 
+> **Platform support:** macOS — supported (developed & verified on this machine) · Windows — unverified (paths are cross-platform in the codebase, but no real-machine testing yet).
+
 [中文说明](README.zh-CN.md) · License: [AGPL-3.0](LICENSE)
 
 ## Features
